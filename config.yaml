@@ -1,0 +1,23 @@
+# TinyGraph Configuration File
+# This file defines the distributed graph database cluster configuration
+
+query_manager:
+  host: "localhost"
+  port: 9090
+
+# Shard configuration - each shard stores a partition of the graph
+shards:
+  - id: 0
+    host: "localhost"
+    port: 9091
+    # TODO: Add more shards here
+
+# Partitioning strategy defines how vertices/edges are distributed across shards
+partitioning:
+  algorithm: "hash"  # Options: "hash", ...
+
+# Replication strategy defines how data is replicated for fault tolerance
+replication:
+  strategy: "none"  # Options: "none", "read_write_primary", "read_replica_write_primary"
+  replication_factor: 0  # Number of replicas (set to 0 if strategy is "none")
+
