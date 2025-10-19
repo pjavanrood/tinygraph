@@ -15,6 +15,82 @@ go build
 go run main.go
 ```
 
+## Project Structure
+
+```
+tinygraph/
+├── main.go                          # Main entry point (demo/test setup)
+├── go.mod
+├── README.md
+│
+├── pkg/                             # Public packages
+│   │
+│   ├── mvcc/                        # MVCC Core Data Structures
+│   │                                # - Vertex/Edge structs with version history
+│   │                                # - Time-travel query utilities
+│   │                                # - Pure data structures, no networking
+│   │
+│   ├── shard/                       # Shard Implementation
+│   │                                # - ShardRSM (replicated state machine)
+│   │                                # - Raft consensus integration
+│   │                                # - MVCC operation application
+│   │                                # - RPC server for shard operations
+│   │
+│   ├── qm/                          # Query Manager Implementation
+│   │                                # - Stateless coordinator logic
+│   │                                # - Partitioning algorithms (Random, Heuristic)
+│   │                                # - Request routing to shards
+│   │                                # - Vertex ID encoding (shard_id + uuid)
+│   │                                # - Timestamp generation/coordination
+│   │                                # - Client-facing RPC server
+│   │
+│   ├── bfs/                         # BFS Implementations
+│   │                                # - Baseline synchronous BFS
+│   │                                # - Optimized batched BFS (Phase 3)
+│   │                                # - Async shard-coordinated BFS (Phase 3)
+│   │
+│   ├── rpc/                         # RPC Definitions
+│   │                                # - Client-facing API (Client → QM)
+│   │                                # - Shard internal API (QM → Shard, Shard → Shard)
+│   │                                # - Protocol Buffer definitions
+│   │                                # - Common RPC types
+│   │
+│   └── partition/                   # Partitioning Utilities
+│                                    # - Partitioning strategy interface
+│                                    # - Shared types for partitioning
+│
+├── internal/                        # Internal packages
+│   ├── config/                      # System configuration
+│   │                                # - Config structs
+│   │                                # - Replication mode enum
+│   │
+│   └── util/                        # Utilities
+│                                    # - ID encoding/decoding helpers
+│                                    # - Clock/timestamp utilities
+│                                    # - Custom error types
+│
+├── cmd/                             # Executables
+│   ├── shard/                       # Shard server executable
+│   ├── qm/                          # Query Manager executable
+│   └── client/                      # CLI client for testing
+│
+├── test/                            # Integration tests
+│                                    # - MVCC correctness tests
+│                                    # - Multi-shard distributed tests
+│                                    # - BFS correctness tests
+│
+└── benchmark/                       # Performance benchmarks
+                                     # - Workload generator
+                                     # - Benchmark suite
+```
+
+### Module Separation
+
+- **MVCC Layer (`pkg/mvcc/`)**: Core versioned graph data structures with no dependencies on networking or coordination
+- **Shard Layer (`pkg/shard/`)**: Wraps MVCC in a replicated state machine using Raft, handles local storage and serves internal RPCs
+- **Query Manager Layer (`pkg/qm/`)**: Stateless coordinator that handles partitioning, routing, and distributed query orchestration
+- **RPC Layer (`pkg/rpc/`)**: Clean API contracts separating client operations from internal shard communication
+
 ## **TinyGraph: A Distributed Graph Database**
 
 Course: CPSC 538B Fall 2025  
