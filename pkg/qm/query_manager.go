@@ -49,6 +49,10 @@ func (qm *QueryManager) getShardIDFromVertexID(vertexID string) (int, error) {
 }
 
 func (qm *QueryManager) addVertexToShard(shardConfig *config.ShardConfig, req *rpcTypes.AddVertexToShardRequest) error {
+	// TODO: Remove this after Shard is implemented
+	log.Printf("Adding vertex to shard %d", shardConfig.ID)
+	return nil
+
 	// Connect to the shard
 	addr := shardConfig.GetAddress()
 	client, err := rpc.Dial("tcp", addr)
@@ -72,6 +76,10 @@ func (qm *QueryManager) addVertexToShard(shardConfig *config.ShardConfig, req *r
 }
 
 func (qm *QueryManager) addEdgeToShard(shardConfig *config.ShardConfig, req *rpcTypes.AddEdgeToShardRequest) (string, error) {
+	log.Printf("Adding edge to shard %d", shardConfig.ID)
+	// TODO: Remove this after Shard is implemented
+	return "1234", nil
+
 	// Connect to the shard
 	addr := shardConfig.GetAddress()
 	client, err := rpc.Dial("tcp", addr)
@@ -95,6 +103,10 @@ func (qm *QueryManager) addEdgeToShard(shardConfig *config.ShardConfig, req *rpc
 }
 
 func (qm *QueryManager) deleteEdgeToShard(shardConfig *config.ShardConfig, req *rpcTypes.DeleteEdgeToShardRequest) error {
+	log.Printf("Deleting edge to shard %d", shardConfig.ID)
+	// TODO: Remove this after Shard is implemented
+	return nil
+
 	// Connect to the shard
 	addr := shardConfig.GetAddress()
 	client, err := rpc.Dial("tcp", addr)

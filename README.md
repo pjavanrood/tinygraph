@@ -4,10 +4,40 @@ A lightweight graph library written in Go.
 
 ## Getting Started
 
+
+#### 1. Start the Query Manager (QM)
+
+The Query Manager coordinates client requests and routes them to shards:
+
 ```bash
-go build
-./tinygraph
+go run cmd/qm/main.go -config config.yaml
 ```
+
+Or simply (since `config.yaml` is the default):
+
+```bash
+go run cmd/qm/main.go
+```
+
+The QM runs on `localhost:9090` by default (configurable in `config.yaml`).
+
+#### 2. Run the Client
+
+The client connects to the Query Manager and executes workloads:
+
+```bash
+go run cmd/client/main.go -config config.yaml -workload cmd/client/workloads/simple_graph.txt
+```
+
+Or using defaults:
+
+```bash
+go run cmd/client/main.go -workload cmd/client/workloads/simple_graph.txt
+```
+
+**Workload Format:**
+- `A vertex1 vertex2 [weight]` - Add edge between vertices
+- `D vertex1 vertex2` - Delete edge between vertices
 
 ## Development
 
