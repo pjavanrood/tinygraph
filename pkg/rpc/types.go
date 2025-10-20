@@ -57,8 +57,8 @@ type AddEdgeToShardResponse struct {
 
 // DeleteEdge request and response
 type DeleteEdgeRequest struct {
-	FromVertexId string // The ID of the source vertex
-	ToVertexId   string // The ID of the to vertex
+	FromVertexID string // The ID of the source vertex
+	ToVertexID   string // The ID of the to vertex
 }
 
 type DeleteEdgeResponse struct {
@@ -66,8 +66,8 @@ type DeleteEdgeResponse struct {
 }
 
 type DeleteEdgeToShardRequest struct {
-	FromVertexId string // The ID of the source vertex
-	ToVertexId   string // The ID of the to vertex
+	FromVertexID string // The ID of the source vertex
+	ToVertexID   string // The ID of the to vertex
 }
 
 type DeleteEdgeToShardResponse struct {
