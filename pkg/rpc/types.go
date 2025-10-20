@@ -22,7 +22,7 @@ type AddVertexResponse struct {
 }
 
 type AddVertexToShardRequest struct {
-	VertexID string            // The ID of the vertex that was added
+	VertexID   string            // The ID of the vertex that was added
 	Properties map[string]string // Key-value properties for the vertex
 }
 
@@ -35,23 +35,21 @@ type AddVertexToShardResponse struct {
 // AddEdge request and response
 type AddEdgeRequest struct {
 	FromVertexID string            // The ID of the from vertex
-	ToVertexID string            // The ID of the to vertex
-	Properties map[string]string // Key-value properties for the edge
+	ToVertexID   string            // The ID of the to vertex
+	Properties   map[string]string // Key-value properties for the edge
 }
 
 type AddEdgeResponse struct {
 	Success bool // Whether the operation succeeded
-	EdgeID string // The ID of the edge that was added
 }
 
 type AddEdgeToShardRequest struct {
 	FromVertexID string            // The ID of the from vertex
-	ToVertexID string            // The ID of the to vertex
-	Properties map[string]string // Key-value properties for the edge
+	ToVertexID   string            // The ID of the to vertex
+	Properties   map[string]string // Key-value properties for the edge
 }
 
 type AddEdgeToShardResponse struct {
-	EdgeID string // The ID of the edge that was added
 	Success bool // Whether the operation succeeded
 }
 
@@ -59,7 +57,8 @@ type AddEdgeToShardResponse struct {
 
 // DeleteEdge request and response
 type DeleteEdgeRequest struct {
-	EdgeID string // The ID of the edge to delete
+	FromVertexId string // The ID of the source vertex
+	ToVertexId   string // The ID of the to vertex
 }
 
 type DeleteEdgeResponse struct {
@@ -67,7 +66,8 @@ type DeleteEdgeResponse struct {
 }
 
 type DeleteEdgeToShardRequest struct {
-	EdgeID string // The ID of the edge to delete
+	FromVertexId string // The ID of the source vertex
+	ToVertexId   string // The ID of the to vertex
 }
 
 type DeleteEdgeToShardResponse struct {
