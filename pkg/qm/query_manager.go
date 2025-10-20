@@ -75,16 +75,16 @@ func (qm *QueryManager) addVertexToShard(shardConfig *config.ShardConfig, req *r
 	return nil
 }
 
-func (qm *QueryManager) addEdgeToShard(shardConfig *config.ShardConfig, req *rpcTypes.AddEdgeToShardRequest) (string, error) {
+func (qm *QueryManager) addEdgeToShard(shardConfig *config.ShardConfig, req *rpcTypes.AddEdgeToShardRequest) error {
 	log.Printf("Adding edge to shard %d", shardConfig.ID)
 	// TODO: Remove this after Shard is implemented
-	return "1234", nil
+	return nil
 
 	// Connect to the shard
 	addr := shardConfig.GetAddress()
 	client, err := rpc.Dial("tcp", addr)
 	if err != nil {
-		return "", fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
+		return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
 	}
 	defer client.Close()
 
@@ -92,14 +92,14 @@ func (qm *QueryManager) addEdgeToShard(shardConfig *config.ShardConfig, req *rpc
 	var resp rpcTypes.AddEdgeToShardResponse
 	err = client.Call("Shard.AddEdge", req, &resp)
 	if err != nil {
-		return "", fmt.Errorf("RPC call to shard %d failed: %w", shardConfig.ID, err)
+		return fmt.Errorf("RPC call to shard %d failed: %w", shardConfig.ID, err)
 	}
 
 	if !resp.Success {
-		return "", fmt.Errorf("shard %d failed to add edge", shardConfig.ID)
+		return fmt.Errorf("shard %d failed to add edge", shardConfig.ID)
 	}
 
-	return resp.EdgeID, nil
+	return nil
 }
 
 func (qm *QueryManager) deleteEdgeToShard(shardConfig *config.ShardConfig, req *rpcTypes.DeleteEdgeToShardRequest) error {
@@ -172,10 +172,10 @@ func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.Add
 		return err
 	}
 
-	edgeID, err := qm.addEdgeToShard(shardConfig, &rpcTypes.AddEdgeToShardRequest{
+	err = qm.addEdgeToShard(shardConfig, &rpcTypes.AddEdgeToShardRequest{
 		FromVertexID: req.FromVertexID,
-		ToVertexID: req.ToVertexID,
-		Properties: req.Properties,
+		ToVertexID:   req.ToVertexID,
+		Properties:   req.Properties,
 	})
 	if err != nil {
 		log.Printf("Failed to add edge: %v", err)
@@ -184,7 +184,6 @@ func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.Add
 	}
 
 	resp.Success = true
-	resp.EdgeID = edgeID
 	return nil
 }
 
@@ -192,7 +191,7 @@ func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.Add
 func (qm *QueryManager) DeleteEdge(req *rpcTypes.DeleteEdgeRequest, resp *rpcTypes.DeleteEdgeResponse) error {
 	log.Printf("Received DeleteEdge request")
 
-	shardID, err := qm.getShardIDFromVertexID(req.EdgeID)
+	shardID, err := qm.getShardIDFromVertexID(req.FromVertexID)
 	if err != nil {
 		log.Printf("Failed to get shard ID from edge ID: %v", err)
 		resp.Success = false
@@ -207,7 +206,8 @@ func (qm *QueryManager) DeleteEdge(req *rpcTypes.DeleteEdgeRequest, resp *rpcTyp
 	}
 
 	err = qm.deleteEdgeToShard(shardConfig, &rpcTypes.DeleteEdgeToShardRequest{
-		EdgeID: req.EdgeID,
+		FromVertexID: req.FromVertexID,
+		ToVertexID:   req.ToVertexID,
 	})
 	if err != nil {
 		log.Printf("Failed to delete edge: %v", err)
