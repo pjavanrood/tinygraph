@@ -8,6 +8,7 @@ import (
 	"net/rpc"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
@@ -49,9 +50,7 @@ func (qm *QueryManager) getShardIDFromVertexID(vertexID string) (int, error) {
 }
 
 func (qm *QueryManager) addVertexToShard(shardConfig *config.ShardConfig, req *rpcTypes.AddVertexToShardRequest) error {
-	// TODO: Remove this after Shard is implemented
 	log.Printf("Adding vertex to shard %d", shardConfig.ID)
-	return nil
 
 	// Connect to the shard
 	addr := shardConfig.GetAddress()
@@ -77,8 +76,6 @@ func (qm *QueryManager) addVertexToShard(shardConfig *config.ShardConfig, req *r
 
 func (qm *QueryManager) addEdgeToShard(shardConfig *config.ShardConfig, req *rpcTypes.AddEdgeToShardRequest) error {
 	log.Printf("Adding edge to shard %d", shardConfig.ID)
-	// TODO: Remove this after Shard is implemented
-	return nil
 
 	// Connect to the shard
 	addr := shardConfig.GetAddress()
@@ -104,8 +101,6 @@ func (qm *QueryManager) addEdgeToShard(shardConfig *config.ShardConfig, req *rpc
 
 func (qm *QueryManager) deleteEdgeToShard(shardConfig *config.ShardConfig, req *rpcTypes.DeleteEdgeToShardRequest) error {
 	log.Printf("Deleting edge to shard %d", shardConfig.ID)
-	// TODO: Remove this after Shard is implemented
-	return nil
 
 	// Connect to the shard
 	addr := shardConfig.GetAddress()
@@ -129,6 +124,27 @@ func (qm *QueryManager) deleteEdgeToShard(shardConfig *config.ShardConfig, req *
 	return nil
 }
 
+func (qm *QueryManager) getNeighborsToShard(shardConfig *config.ShardConfig, req *rpcTypes.GetNeighborsToShardRequest) ([]string, error) {
+	log.Printf("Getting neighbors to shard %d", shardConfig.ID)
+
+	// Connect to the shard
+	addr := shardConfig.GetAddress()
+	client, err := rpc.Dial("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
+	}
+	defer client.Close()
+
+	// Make the RPC call to get the neighbors
+	var resp rpcTypes.GetNeighborsToShardResponse
+	err = client.Call("Shard.GetNeighbors", req, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("RPC call to shard %d failed: %w", shardConfig.ID, err)
+	}
+
+	return resp.Neighbors, nil
+}
+
 // AddVertex is the RPC handler for adding a vertex
 func (qm *QueryManager) AddVertex(req *rpcTypes.AddVertexRequest, resp *rpcTypes.AddVertexResponse) error {
 	log.Printf("Received AddVertex request")
@@ -136,10 +152,12 @@ func (qm *QueryManager) AddVertex(req *rpcTypes.AddVertexRequest, resp *rpcTypes
 	// Select a shard and generate a vertex ID
 	shardConfig := RandomPartitioner(qm.config)
 	vertexID := qm.generateVertexID(shardConfig)
+	timestamp := float64(time.Now().Unix())
 
 	// Add the vertex to the shard
 	err := qm.addVertexToShard(shardConfig, &rpcTypes.AddVertexToShardRequest{
 		VertexID:   vertexID,
+		Timestamp:  timestamp,
 		Properties: req.Properties,
 	})
 	if err != nil {
@@ -150,6 +168,7 @@ func (qm *QueryManager) AddVertex(req *rpcTypes.AddVertexRequest, resp *rpcTypes
 
 	resp.Success = true
 	resp.VertexID = vertexID
+	resp.Timestamp = timestamp
 	log.Printf("Successfully added vertex with ID: %s", vertexID)
 	return nil
 }
@@ -172,10 +191,13 @@ func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.Add
 		return err
 	}
 
+	timestamp := float64(time.Now().Unix())
+
 	err = qm.addEdgeToShard(shardConfig, &rpcTypes.AddEdgeToShardRequest{
 		FromVertexID: req.FromVertexID,
 		ToVertexID:   req.ToVertexID,
 		Properties:   req.Properties,
+		Timestamp:    timestamp,
 	})
 	if err != nil {
 		log.Printf("Failed to add edge: %v", err)
@@ -184,6 +206,7 @@ func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.Add
 	}
 
 	resp.Success = true
+	resp.Timestamp = timestamp
 	return nil
 }
 
@@ -205,9 +228,12 @@ func (qm *QueryManager) DeleteEdge(req *rpcTypes.DeleteEdgeRequest, resp *rpcTyp
 		return err
 	}
 
+	timestamp := float64(time.Now().Unix())
+
 	err = qm.deleteEdgeToShard(shardConfig, &rpcTypes.DeleteEdgeToShardRequest{
 		FromVertexID: req.FromVertexID,
 		ToVertexID:   req.ToVertexID,
+		Timestamp:    timestamp,
 	})
 	if err != nil {
 		log.Printf("Failed to delete edge: %v", err)
@@ -216,6 +242,69 @@ func (qm *QueryManager) DeleteEdge(req *rpcTypes.DeleteEdgeRequest, resp *rpcTyp
 	}
 
 	resp.Success = true
+	resp.Timestamp = timestamp
+	return nil
+}
+
+// BFS is the RPC handler for performing a BFS
+func (qm *QueryManager) BFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSResponse) error {
+	log.Printf("Received BFS request")
+
+	timestamp := req.Timestamp
+	radius := req.Radius
+
+	q := make([]string, 0)
+	q = append(q, req.StartVertexID)
+	visited := make(map[string]int)
+	visited[req.StartVertexID] = 0
+
+	for len(q) > 0 {
+		current := q[0]
+		q = q[1:]
+
+		shardID, err := qm.getShardIDFromVertexID(current)
+		if err != nil {
+			log.Printf("Failed to get shard ID from vertex ID: %v", err)
+			return err
+		}
+
+		shardConfig, err := qm.config.GetShardByID(shardID)
+		if err != nil {
+			log.Printf("Failed to get shard by ID: %v", err)
+			return err
+		}
+
+		if visited[current] == radius {
+			continue
+		}
+
+		neighbors, err := qm.getNeighborsToShard(
+			shardConfig, &rpcTypes.GetNeighborsToShardRequest{
+				VertexID: current,
+				Timestamp: timestamp,
+			},
+			
+		)
+		if err != nil {
+			log.Printf("Failed to get neighbors to shard: %v", err)
+			return err
+		}
+
+		for _, neighbor := range neighbors {
+			if _, ok := visited[neighbor]; !ok {
+				visited[neighbor] = visited[current] + 1
+				q = append(q, neighbor)
+			}
+		}
+	}
+
+	resp.Vertices = make([]string, len(visited))
+	i := 0
+	for vertex, _ := range visited {
+		resp.Vertices[i] = vertex
+		i++
+	}
+
 	return nil
 }
 

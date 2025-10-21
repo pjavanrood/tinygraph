@@ -1,7 +1,5 @@
 package mvcc
 
-import "fmt"
-
 // Vertex structure for MVCC
 
 // VertexProp placeholder 
@@ -64,4 +62,15 @@ func (v *Vertex) GetEdge(to string, ts float64) *Edge {
 // HasEdge checks whether an edge to `to` is alive at timestamp ts.
 func (v *Vertex) HasEdge(to string, ts float64) bool {
 	return v.GetEdge(to, ts) != nil
+}
+
+// GetAllEdges returns all edges for a vertex at timestamp ts.
+func (v *Vertex) GetAllEdges(ts float64) []*Edge {
+	edges := []*Edge{}
+	for _, edge := range v.Edges {
+		if edge.AliveAt(ts) {
+			edges = append(edges, edge)
+		}
+	}
+	return edges
 }

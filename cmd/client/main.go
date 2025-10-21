@@ -8,6 +8,7 @@ import (
 	"net/rpc"
 	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
@@ -16,8 +17,7 @@ import (
 type GraphClient struct {
 	cfg *config.Config
 	conn *rpc.Client
-	vertexIDMap map[string]string
-	edgeIDMap map[string]string
+	vertexIDMap map[string]string // external vertex ID -> internal vertex ID
 }
 
 func NewGraphClient(cfg *config.Config) *GraphClient {
@@ -29,8 +29,16 @@ func NewGraphClient(cfg *config.Config) *GraphClient {
 		cfg: cfg,
 		conn: conn,
 		vertexIDMap: make(map[string]string),
-		edgeIDMap: make(map[string]string),
 	}
+}
+
+func (gc *GraphClient) getExternalVertexID(internalVertexID string) (string, error) {
+	for externalVertexID, internalVertexID_ := range gc.vertexIDMap {
+		if internalVertexID_ == internalVertexID {
+			return externalVertexID, nil
+		}
+	}
+	return "", fmt.Errorf("vertex %s not found", internalVertexID)
 }
 
 func (gc *GraphClient) sendAddVertexRPC(properties map[string]string) (string, error) {
@@ -41,22 +49,36 @@ func (gc *GraphClient) sendAddVertexRPC(properties map[string]string) (string, e
 	return resp.VertexID, err
 }
 
-func (gc *GraphClient) sendAddEdgeRPC(fromVertexID string, toVertexID string, properties map[string]string) (string, error) {
+func (gc *GraphClient) sendAddEdgeRPC(fromVertexID string, toVertexID string, properties map[string]string) (bool, error) {
 	var resp rpcTypes.AddEdgeResponse
 	err := gc.conn.Call("QueryManager.AddEdge", &rpcTypes.AddEdgeRequest{
 		FromVertexID: fromVertexID,
 		ToVertexID: toVertexID,
 		Properties: properties,
 	}, &resp)
-	return resp.EdgeID, err
+	return resp.Success, err
 }
 
-func (gc *GraphClient) sendDeleteEdgeRPC(edgeID string) error {
+func (gc *GraphClient) sendDeleteEdgeRPC(fromVertexID string, toVertexID string) error {
 	var resp rpcTypes.DeleteEdgeResponse
 	err := gc.conn.Call("QueryManager.DeleteEdge", &rpcTypes.DeleteEdgeRequest{
-		EdgeID: edgeID,
+		FromVertexID: fromVertexID,
+		ToVertexID: toVertexID,
 	}, &resp)
 	return err
+}
+
+func (gc *GraphClient) sendBFSRPC(startVertexID string, radius int) ([]string, error) {
+	var resp rpcTypes.BFSResponse
+	err := gc.conn.Call("QueryManager.BFS", &rpcTypes.BFSRequest{
+		StartVertexID: startVertexID,
+		Radius: radius,
+		Timestamp: float64(time.Now().Unix()),
+	}, &resp)
+	if err != nil {
+		return nil, err
+	}
+	return resp.Vertices, nil
 }
 
 func (gc *GraphClient) AddVertex(vertexID string) string {
@@ -85,11 +107,13 @@ func (gc *GraphClient) AddEdge(fromVertexID string, toVertexID string, weight in
 	properties := map[string]string{
 		"weight": strconv.Itoa(weight),
 	}
-	edgeID, err := gc.sendAddEdgeRPC(fromVertexID_internal, toVertexID_internal, properties)
+	success, err := gc.sendAddEdgeRPC(fromVertexID_internal, toVertexID_internal, properties)
 	if err != nil {
 		log.Fatalf("Failed to add edge: %v", err)
 	}
-	gc.edgeIDMap[fmt.Sprintf("%s-%s", fromVertexID_internal, toVertexID_internal)] = edgeID
+	if !success {
+		log.Fatalf("Failed to add edge")
+	}
 }
 
 func (gc *GraphClient) DeleteEdge(fromVertexID string, toVertexID string) {
@@ -101,15 +125,30 @@ func (gc *GraphClient) DeleteEdge(fromVertexID string, toVertexID string) {
 	if !ok {
 		log.Fatalf("To vertex %s not found", toVertexID)
 	}
-	edgeID, ok := gc.edgeIDMap[fmt.Sprintf("%s-%s", fromVertexID_internal, toVertexID_internal)]
-	if !ok {
-		log.Fatalf("Edge %s-%s not found", fromVertexID, toVertexID)
-	}
-	err := gc.sendDeleteEdgeRPC(edgeID)
+	err := gc.sendDeleteEdgeRPC(fromVertexID_internal, toVertexID_internal)
 	if err != nil {
 		log.Fatalf("Failed to delete edge: %v", err)
 	}
-	delete(gc.edgeIDMap, fmt.Sprintf("%s-%s", fromVertexID_internal, toVertexID_internal))
+}
+
+func (gc *GraphClient) BFS(startVertexID string, radius int) {
+	startVertexID_internal, ok := gc.vertexIDMap[startVertexID]
+	if !ok {
+		log.Fatalf("Start vertex %s not found", startVertexID)
+	}
+	verticesInternalIDs, err := gc.sendBFSRPC(startVertexID_internal, radius)
+	if err != nil {
+		log.Fatalf("Failed to perform BFS: %v", err)
+	}
+	fmt.Println("BFS result:")
+	for _, vertexInternalID := range verticesInternalIDs {
+		vertex, err := gc.getExternalVertexID(vertexInternalID)
+		if err != nil {
+			log.Fatalf("Vertex %s not found", vertexInternalID)
+		}
+		fmt.Print(vertex + " ")
+	}
+	fmt.Println()
 }
 
 func runWorkload(workloadPath string, cfg *config.Config) {
@@ -142,6 +181,15 @@ func runWorkload(workloadPath string, cfg *config.Config) {
 			client.AddEdge(fields[1], fields[2], weight)
 		case "D":
 			client.DeleteEdge(fields[1], fields[2])
+		case "Q":
+			radius := 1
+			if len(fields) == 3 {
+				radius, err = strconv.Atoi(fields[2])
+				if err != nil {
+					log.Fatalf("Invalid radius: %v", err)
+				}
+			}
+			client.BFS(fields[1], radius)
 		}
 	}
 }
