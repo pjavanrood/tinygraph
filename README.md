@@ -4,6 +4,23 @@ A lightweight graph library written in Go.
 
 ## Getting Started
 
+### Running Tests
+
+TinyGraph includes comprehensive end-to-end tests that verify MVCC correctness and distributed system behavior.`
+```bash
+cd test
+go test -v
+```
+
+**What the tests verify:**
+- Basic operations: AddVertex, AddEdge, DeleteEdge, BFS
+- MVCC time-travel queries (querying graph state at historical timestamps)
+- Edge deletion and re-addition with proper versioning
+- Complex graph evolution scenarios
+
+For detailed testing documentation, see [test/E2E_TEST_README.md](test/E2E_TEST_README.md)
+
+---
 
 #### 1. Start the Query Manager (QM)
 
