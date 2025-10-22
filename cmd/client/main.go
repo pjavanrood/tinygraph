@@ -2,22 +2,23 @@ package main
 
 import (
 	"flag"
-	"log"
-	"os"
-	"strings"
-	"net/rpc"
 	"fmt"
+	"log"
+	"net/rpc"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
+	"github.com/pjavanrood/tinygraph/internal/types"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
 type GraphClient struct {
-	cfg *config.Config
-	conn *rpc.Client
-	vertexIDMap map[string]string // external vertex ID -> internal vertex ID
+	cfg         *config.Config
+	conn        *rpc.Client
+	vertexIDMap map[string]types.VertexId // external vertex ID -> internal vertex ID
 }
 
 func NewGraphClient(cfg *config.Config) *GraphClient {
@@ -26,13 +27,13 @@ func NewGraphClient(cfg *config.Config) *GraphClient {
 		log.Fatalf("Failed to connect to query manager: %v", err)
 	}
 	return &GraphClient{
-		cfg: cfg,
-		conn: conn,
-		vertexIDMap: make(map[string]string),
+		cfg:         cfg,
+		conn:        conn,
+		vertexIDMap: make(map[string]types.VertexId),
 	}
 }
 
-func (gc *GraphClient) getExternalVertexID(internalVertexID string) (string, error) {
+func (gc *GraphClient) getExternalVertexID(internalVertexID types.VertexId) (string, error) {
 	for externalVertexID, internalVertexID_ := range gc.vertexIDMap {
 		if internalVertexID_ == internalVertexID {
 			return externalVertexID, nil
@@ -41,7 +42,7 @@ func (gc *GraphClient) getExternalVertexID(internalVertexID string) (string, err
 	return "", fmt.Errorf("vertex %s not found", internalVertexID)
 }
 
-func (gc *GraphClient) sendAddVertexRPC(properties map[string]string) (string, error) {
+func (gc *GraphClient) sendAddVertexRPC(properties types.Properties) (types.VertexId, error) {
 	var resp rpcTypes.AddVertexResponse
 	err := gc.conn.Call("QueryManager.AddVertex", &rpcTypes.AddVertexRequest{
 		Properties: properties,
@@ -49,31 +50,31 @@ func (gc *GraphClient) sendAddVertexRPC(properties map[string]string) (string, e
 	return resp.VertexID, err
 }
 
-func (gc *GraphClient) sendAddEdgeRPC(fromVertexID string, toVertexID string, properties map[string]string) (bool, error) {
+func (gc *GraphClient) sendAddEdgeRPC(fromVertexID types.VertexId, toVertexID types.VertexId, properties types.Properties) (bool, error) {
 	var resp rpcTypes.AddEdgeResponse
 	err := gc.conn.Call("QueryManager.AddEdge", &rpcTypes.AddEdgeRequest{
 		FromVertexID: fromVertexID,
-		ToVertexID: toVertexID,
-		Properties: properties,
+		ToVertexID:   toVertexID,
+		Properties:   properties,
 	}, &resp)
 	return resp.Success, err
 }
 
-func (gc *GraphClient) sendDeleteEdgeRPC(fromVertexID string, toVertexID string) error {
+func (gc *GraphClient) sendDeleteEdgeRPC(fromVertexID types.VertexId, toVertexID types.VertexId) error {
 	var resp rpcTypes.DeleteEdgeResponse
 	err := gc.conn.Call("QueryManager.DeleteEdge", &rpcTypes.DeleteEdgeRequest{
 		FromVertexID: fromVertexID,
-		ToVertexID: toVertexID,
+		ToVertexID:   toVertexID,
 	}, &resp)
 	return err
 }
 
-func (gc *GraphClient) sendBFSRPC(startVertexID string, radius int) ([]string, error) {
+func (gc *GraphClient) sendBFSRPC(startVertexID types.VertexId, radius int) ([]types.VertexId, error) {
 	var resp rpcTypes.BFSResponse
 	err := gc.conn.Call("QueryManager.BFS", &rpcTypes.BFSRequest{
 		StartVertexID: startVertexID,
-		Radius: radius,
-		Timestamp: float64(time.Now().Unix()),
+		Radius:        radius,
+		Timestamp:     types.Timestamp(float64(time.Now().Unix())),
 	}, &resp)
 	if err != nil {
 		return nil, err
@@ -81,16 +82,16 @@ func (gc *GraphClient) sendBFSRPC(startVertexID string, radius int) ([]string, e
 	return resp.Vertices, nil
 }
 
-func (gc *GraphClient) AddVertex(vertexID string) string {
-	properties := map[string]string{
+func (gc *GraphClient) AddVertex(vertexID string) types.VertexId {
+	properties := types.Properties{
 		"external_id": vertexID,
 	}
 
-	vertexID, err := gc.sendAddVertexRPC(properties)
+	out, err := gc.sendAddVertexRPC(properties)
 	if err != nil {
 		log.Fatalf("Failed to add vertex: %v", err)
 	}
-	return vertexID
+	return out
 }
 
 func (gc *GraphClient) AddEdge(fromVertexID string, toVertexID string, weight int) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
+	"github.com/pjavanrood/tinygraph/internal/types"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
@@ -26,17 +27,21 @@ func NewQueryManager(cfg *config.Config) *QueryManager {
 	}
 }
 
+func (qm *QueryManager) generateTimestamp() types.Timestamp {
+	return types.Timestamp(time.Now().Unix())
+}
+
 // generate a vertex ID for a shard: VertexID = "%shardID-%randomHex"
-func (qm *QueryManager) generateVertexID(shardConfig *config.ShardConfig) string {
+func (qm *QueryManager) generateVertexID(shardConfig *config.ShardConfig) types.VertexId {
 	// Compact encoding: shardID-randomHex
 	// Example: "0-a3f2b8c1d4e5f6a7" or "42-1234567890abcdef"
 	randomPart := fmt.Sprintf("%016x", rand.Int63())
-	return fmt.Sprintf("%d-%s", shardConfig.ID, randomPart)
+	return types.VertexId(fmt.Sprintf("%d-%s", shardConfig.ID, randomPart))
 }
 
-func (qm *QueryManager) getShardIDFromVertexID(vertexID string) (int, error) {
+func (qm *QueryManager) getShardIDFromVertexID(vertexID types.VertexId) (int, error) {
 	// Parse the vertex ID format: shardID-randomHex
-	parts := strings.Split(vertexID, "-")
+	parts := strings.Split(string(vertexID), "-")
 	if len(parts) != 2 {
 		return 0, fmt.Errorf("invalid vertex ID format: %s", vertexID)
 	}
@@ -124,7 +129,7 @@ func (qm *QueryManager) deleteEdgeToShard(shardConfig *config.ShardConfig, req *
 	return nil
 }
 
-func (qm *QueryManager) getNeighborsToShard(shardConfig *config.ShardConfig, req *rpcTypes.GetNeighborsToShardRequest) ([]string, error) {
+func (qm *QueryManager) getNeighborsToShard(shardConfig *config.ShardConfig, req *rpcTypes.GetNeighborsToShardRequest) ([]types.VertexId, error) {
 	log.Printf("Getting neighbors to shard %d", shardConfig.ID)
 
 	// Connect to the shard
@@ -152,7 +157,7 @@ func (qm *QueryManager) AddVertex(req *rpcTypes.AddVertexRequest, resp *rpcTypes
 	// Select a shard and generate a vertex ID
 	shardConfig := RandomPartitioner(qm.config)
 	vertexID := qm.generateVertexID(shardConfig)
-	timestamp := float64(time.Now().Unix())
+	timestamp := qm.generateTimestamp()
 
 	// Add the vertex to the shard
 	err := qm.addVertexToShard(shardConfig, &rpcTypes.AddVertexToShardRequest{
@@ -191,7 +196,7 @@ func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.Add
 		return err
 	}
 
-	timestamp := float64(time.Now().Unix())
+	timestamp := qm.generateTimestamp()
 
 	err = qm.addEdgeToShard(shardConfig, &rpcTypes.AddEdgeToShardRequest{
 		FromVertexID: req.FromVertexID,
@@ -228,7 +233,7 @@ func (qm *QueryManager) DeleteEdge(req *rpcTypes.DeleteEdgeRequest, resp *rpcTyp
 		return err
 	}
 
-	timestamp := float64(time.Now().Unix())
+	timestamp := qm.generateTimestamp()
 
 	err = qm.deleteEdgeToShard(shardConfig, &rpcTypes.DeleteEdgeToShardRequest{
 		FromVertexID: req.FromVertexID,
@@ -253,9 +258,9 @@ func (qm *QueryManager) BFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSResponse
 	timestamp := req.Timestamp
 	radius := req.Radius
 
-	q := make([]string, 0)
+	q := make([]types.VertexId, 0)
 	q = append(q, req.StartVertexID)
-	visited := make(map[string]int)
+	visited := make(map[types.VertexId]int)
 	visited[req.StartVertexID] = 0
 
 	for len(q) > 0 {
@@ -280,10 +285,9 @@ func (qm *QueryManager) BFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSResponse
 
 		neighbors, err := qm.getNeighborsToShard(
 			shardConfig, &rpcTypes.GetNeighborsToShardRequest{
-				VertexID: current,
+				VertexID:  current,
 				Timestamp: timestamp,
 			},
-			
 		)
 		if err != nil {
 			log.Printf("Failed to get neighbors to shard: %v", err)
@@ -298,7 +302,7 @@ func (qm *QueryManager) BFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSResponse
 		}
 	}
 
-	resp.Vertices = make([]string, len(visited))
+	resp.Vertices = make([]types.VertexId, len(visited))
 	i := 0
 	for vertex, _ := range visited {
 		resp.Vertices[i] = vertex
