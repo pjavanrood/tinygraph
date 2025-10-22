@@ -7,12 +7,16 @@ import (
 	"net/rpc"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
+	internalTypes "github.com/pjavanrood/tinygraph/internal/types"
 	mvccTypes "github.com/pjavanrood/tinygraph/pkg/mvcc"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
-type ShardId uint32
-type VertexId string
+type ShardId internalTypes.ShardId
+type VertexId internalTypes.VertexId
+type Timestamp internalTypes.Timestamp
+type Props internalTypes.Properties
+
 type Shard struct {
 	vertices map[VertexId]*mvccTypes.Vertex
 	Id       ShardId
@@ -26,7 +30,6 @@ func (s *Shard) AddVertex(req rpcTypes.AddVertexToShardRequest, resp *rpcTypes.A
 	}()
 
 	// check if vertex with given ID already exists, and is not deleted
-	// TODO: change this logic when MVCC is implemented -- so far, if exists then throw err
 	if _, ok := s.vertices[VertexId(req.VertexID)]; ok {
 		success = false
 		return fmt.Errorf("Vertex with ID \"%s\" already exists and is not deleted", req.VertexID)
@@ -78,7 +81,7 @@ func (s *Shard) GetNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *rpcT
 	}
 
 	neighbors := vertex.GetAllEdges(req.Timestamp)
-	resp.Neighbors = make([]string, len(neighbors))
+	resp.Neighbors = make([]internalTypes.VertexId, len(neighbors))
 	for i, edge := range neighbors {
 		resp.Neighbors[i] = edge.ToID
 	}

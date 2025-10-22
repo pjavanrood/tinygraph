@@ -1,5 +1,7 @@
 package rpc
 
+import "github.com/pjavanrood/tinygraph/internal/types"
+
 // ------------------------------------------------------------
 // Service interfaces
 // ------------------------------------------------------------
@@ -13,19 +15,19 @@ type QueryManagerService struct{}
 
 // AddVertex request and response
 type AddVertexRequest struct {
-	Properties map[string]string // Key-value properties for the vertex
+	Properties types.Properties // Key-value properties for the vertex
 }
 
 type AddVertexResponse struct {
-	Success  bool   // Whether the operation succeeded
-	VertexID string // The ID of the vertex that was added
-	Timestamp float64 // The timestamp of the vertex
+	Success   bool            // Whether the operation succeeded
+	VertexID  types.VertexId  // The ID of the vertex that was added
+	Timestamp types.Timestamp // The timestamp of the vertex
 }
 
 type AddVertexToShardRequest struct {
-	VertexID   string            // The ID of the vertex that was added
-	Timestamp  float64           // The timestamp of the vertex
-	Properties map[string]string // Key-value properties for the vertex
+	VertexID   types.VertexId   // The ID of the vertex that was added
+	Timestamp  types.Timestamp  // The timestamp of the vertex
+	Properties types.Properties // Key-value properties for the vertex
 }
 
 type AddVertexToShardResponse struct {
@@ -36,21 +38,21 @@ type AddVertexToShardResponse struct {
 
 // AddEdge request and response
 type AddEdgeRequest struct {
-	FromVertexID string            // The ID of the from vertex
-	ToVertexID   string            // The ID of the to vertex
-	Properties   map[string]string // Key-value properties for the edge
+	FromVertexID types.VertexId   // The ID of the from vertex
+	ToVertexID   types.VertexId   // The ID of the to vertex
+	Properties   types.Properties // Key-value properties for the edge
 }
 
 type AddEdgeResponse struct {
-	Success bool // Whether the operation succeeded
-	Timestamp float64 // The timestamp of the edge
+	Success   bool            // Whether the operation succeeded
+	Timestamp types.Timestamp // The timestamp of the edge
 }
 
 type AddEdgeToShardRequest struct {
-	FromVertexID string            // The ID of the from vertex
-	ToVertexID   string            // The ID of the to vertex
-	Properties   map[string]string // Key-value properties for the edge
-	Timestamp    float64           // The timestamp of the edge
+	FromVertexID types.VertexId   // The ID of the from vertex
+	ToVertexID   types.VertexId   // The ID of the to vertex
+	Properties   types.Properties // Key-value properties for the edge
+	Timestamp    types.Timestamp  // The timestamp of the edge
 }
 
 type AddEdgeToShardResponse struct {
@@ -61,19 +63,19 @@ type AddEdgeToShardResponse struct {
 
 // DeleteEdge request and response
 type DeleteEdgeRequest struct {
-	FromVertexID string // The ID of the source vertex
-	ToVertexID   string // The ID of the to vertex
+	FromVertexID types.VertexId // The ID of the source vertex
+	ToVertexID   types.VertexId // The ID of the to vertex
 }
 
 type DeleteEdgeResponse struct {
-	Success bool // Whether the operation succeeded
-	Timestamp float64 // The timestamp of the edge
+	Success   bool            // Whether the operation succeeded
+	Timestamp types.Timestamp // The timestamp of the edge
 }
 
 type DeleteEdgeToShardRequest struct {
-	FromVertexID string // The ID of the source vertex
-	ToVertexID   string // The ID of the to vertex
-	Timestamp    float64 // The timestamp of the edge
+	FromVertexID types.VertexId  // The ID of the source vertex
+	ToVertexID   types.VertexId  // The ID of the to vertex
+	Timestamp    types.Timestamp // The timestamp of the edge
 }
 
 type DeleteEdgeToShardResponse struct {
@@ -84,23 +86,23 @@ type DeleteEdgeToShardResponse struct {
 
 // GetNeighborsToShard request and response
 type GetNeighborsToShardRequest struct {
-	VertexID string // The ID of the vertex
-	Timestamp float64 // The timestamp
+	VertexID  types.VertexId  // The ID of the vertex
+	Timestamp types.Timestamp // The timestamp
 }
 
 type GetNeighborsToShardResponse struct {
-	Neighbors []string // The IDs of the neighbors
+	Neighbors []types.VertexId // The IDs of the neighbors
 }
 
 // ------------------------------------------------------------
 
 // BFS request and response
 type BFSRequest struct {
-	StartVertexID string // The ID of the start vertex
-	Radius        int    // The radius of the BFS
-	Timestamp     float64 // The timestamp of the BFS
+	StartVertexID types.VertexId  // The ID of the start vertex
+	Radius        int             // The radius of the BFS
+	Timestamp     types.Timestamp // The timestamp of the BFS
 }
 
 type BFSResponse struct {
-	Vertices []string // The IDs of the vertices in the BFS
+	Vertices []types.VertexId // The IDs of the vertices in the BFS
 }
