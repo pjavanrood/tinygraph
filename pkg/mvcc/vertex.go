@@ -2,7 +2,7 @@ package mvcc
 
 import (
 	"slices"
-
+	"fmt"
 	"github.com/pjavanrood/tinygraph/internal/types"
 )
 
@@ -85,8 +85,13 @@ func (v *Vertex) HasEdge(to types.VertexId, ts types.Timestamp) bool {
 
 // GetAllEdges returns all edges for a vertex at timestamp ts.
 func (v *Vertex) GetAllEdges(ts types.Timestamp) []*Edge {
+	vAtTs := v.GetAt(ts)
+	if vAtTs == nil {
+		return nil
+	}
+
 	edges := make([]*Edge, 0)
-	for _, edge := range v.Edges {
+	for _, edge := range vAtTs.Edges {
 		if edge.AliveAt(ts) {
 			edges = append(edges, edge)
 		}
@@ -106,4 +111,16 @@ func (v *Vertex) GetAt(ts types.Timestamp) *Vertex {
 	}
 
 	return nil
+}
+
+func (v *Vertex) Print() {
+	fmt.Printf("Vertex %s at timestamp %f\n", v.ID, v.TS)
+	for _, edge := range v.Edges {
+		edge.Print()
+	}
+	fmt.Print("Previous versions timestamps: ")
+	for _, prev := range v.Prev {
+		fmt.Printf("%f ", prev.TS)
+	}
+	fmt.Println()
 }

@@ -2,7 +2,7 @@ package mvcc
 
 import (
 	"slices"
-
+	"fmt"
 	"github.com/pjavanrood/tinygraph/internal/types"
 )
 
@@ -53,7 +53,7 @@ func (e *Edge) UpdateEdge(ts types.Timestamp, prop *EdgeProp) *Edge {
 		out.Prev = slices.Insert(temp, 0, e)
 	}
 
-	return e
+	return out
 }
 
 // MarkDeleted creates a deleted version of this edge (logical deletion).
@@ -69,7 +69,7 @@ func (e *Edge) GetAt(ts types.Timestamp) *Edge {
 	}
 
 	for _, ep := range e.Prev {
-		if e.TS <= ts {
+		if ep.TS <= ts {
 			return ep
 		}
 	}
@@ -81,4 +81,14 @@ func (e *Edge) GetAt(ts types.Timestamp) *Edge {
 func (e *Edge) AliveAt(ts types.Timestamp) bool {
 	timestamped := e.GetAt(ts)
 	return timestamped != nil && !timestamped.Destroyed
+}
+
+func (e *Edge) Print() {
+	fmt.Printf("Edge %s -> %s at timestamp %f\n", e.FromID, e.ToID, e.TS)
+	fmt.Printf("Destroyed: %t\n", e.Destroyed)
+	fmt.Print("Previous versions timestamps: ")
+	for _, prev := range e.Prev {
+		fmt.Printf("%f ", prev.TS)
+	}
+	fmt.Println()
 }
