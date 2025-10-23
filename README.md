@@ -1,6 +1,8 @@
-# tinygraph
+## **TinyGraph: A Distributed Graph Database**
 
-A lightweight graph library written in Go.
+Course: CPSC 538B Fall 2025  
+Instructor: Ivan Beschastnikh  
+Group Members: Jiyeon, Oleg, and Parshan
 
 ## Getting Started
 
@@ -137,12 +139,6 @@ tinygraph/
 - **Shard Layer (`pkg/shard/`)**: Wraps MVCC in a replicated state machine using Raft, handles local storage and serves internal RPCs
 - **Query Manager Layer (`pkg/qm/`)**: Stateless coordinator that handles partitioning, routing, and distributed query orchestration
 - **RPC Layer (`pkg/rpc/`)**: Clean API contracts separating client operations from internal shard communication
-
-## **TinyGraph: A Distributed Graph Database**
-
-Course: CPSC 538B Fall 2025  
-Instructor: Ivan Beschastnikh  
-Group Members: Jiyeon, Oleg, and Parshan
 
 ---
 ## **Abstract**
