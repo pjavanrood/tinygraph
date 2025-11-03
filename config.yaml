@@ -6,10 +6,36 @@ query_manager:
   port: 9090
 
 # Shard configuration - each shard stores a partition of the graph
+# Each shard has multiple replicas that use Raft for consensus
 shards:
   - id: 0
-    host: "localhost"
-    port: 9091
+    replicas:
+      # Primary replica (bootstrap the Raft cluster)
+      - id: 0
+        rpc_host: "localhost"
+        rpc_port: 9091
+        raft_host: "localhost"
+        raft_port: 10091
+        raft_dir: "./raft-data/shard-0-replica-0"
+        bootstrap: true
+      
+      # Secondary replicas (join the Raft cluster)
+      - id: 1
+        rpc_host: "localhost"
+        rpc_port: 9092
+        raft_host: "localhost"
+        raft_port: 10092
+        raft_dir: "./raft-data/shard-0-replica-1"
+        bootstrap: false
+      
+      - id: 2
+        rpc_host: "localhost"
+        rpc_port: 9093
+        raft_host: "localhost"
+        raft_port: 10093
+        raft_dir: "./raft-data/shard-0-replica-2"
+        bootstrap: false
+    
     # TODO: Add more shards here
 
 # Partitioning strategy defines how vertices/edges are distributed across shards
@@ -18,6 +44,6 @@ partitioning:
 
 # Replication strategy defines how data is replicated for fault tolerance
 replication:
-  strategy: "none"  # Options: "none", "read_write_primary", "read_replica_write_primary"
-  replication_factor: 0  # Number of replicas (set to 0 if strategy is "none")
+  strategy: "raft"  # Options: "none", "raft"
+  replication_factor: 3  # Number of replicas per shard
 

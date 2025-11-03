@@ -10,9 +10,9 @@ import (
 	"syscall"
 	"testing"
 	"time"
-	
-	"github.com/pjavanrood/tinygraph/internal/types"
+
 	"github.com/pjavanrood/tinygraph/internal/config"
+	"github.com/pjavanrood/tinygraph/internal/types"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
@@ -502,24 +502,27 @@ func TestMain(m *testing.M) {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	// Start shard processes
+	// Start shard replica processes
 	var shardCmds []*exec.Cmd
 	for _, shard := range cfg.Shards {
-		log.Printf("Starting shard %d...", shard.ID)
-		cmd := exec.Command("go", "run", "../cmd/shard/main.go",
-			"-config", "../config.yaml",
-			"-id", fmt.Sprintf("%d", shard.ID))
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		// Set process group so we can kill the entire group including child processes
-		cmd.SysProcAttr = &syscall.SysProcAttr{
-			Setpgid: true,
+		for _, replica := range shard.Replicas {
+			log.Printf("Starting shard %d replica %d...", shard.ID, replica.ID)
+			cmd := exec.Command("go", "run", "../cmd/shard/main.go",
+				"-config", "../config.yaml",
+				"-shard-id", fmt.Sprintf("%d", shard.ID),
+				"-replica-id", fmt.Sprintf("%d", replica.ID))
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			// Set process group so we can kill the entire group including child processes
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Setpgid: true,
+			}
+			err := cmd.Start()
+			if err != nil {
+				log.Fatalf("Failed to start shard %d replica %d: %v", shard.ID, replica.ID, err)
+			}
+			shardCmds = append(shardCmds, cmd)
 		}
-		err := cmd.Start()
-		if err != nil {
-			log.Fatalf("Failed to start shard %d: %v", shard.ID, err)
-		}
-		shardCmds = append(shardCmds, cmd)
 	}
 
 	// Start query manager
@@ -538,7 +541,7 @@ func TestMain(m *testing.M) {
 
 	// Wait for services to be ready
 	log.Println("Waiting for services to start...")
-	time.Sleep(3 * time.Second)
+	time.Sleep(5 * time.Second)
 
 	// Run tests
 	exitCode := m.Run()

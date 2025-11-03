@@ -2,7 +2,7 @@ package mvcc
 
 import (
 	"slices"
-	"fmt"
+
 	"github.com/pjavanrood/tinygraph/internal/types"
 )
 
@@ -113,14 +113,14 @@ func (v *Vertex) GetAt(ts types.Timestamp) *Vertex {
 	return nil
 }
 
-func (v *Vertex) Print() {
-	fmt.Printf("Vertex %s at timestamp %f\n", v.ID, v.TS)
+func (v *Vertex) Log() {
+	log.Printf("Vertex %s at timestamp %f\n", v.ID, v.TS)
 	for _, edge := range v.Edges {
-		edge.Print()
+		edge.Log()
 	}
-	fmt.Print("Previous versions timestamps: ")
+	log.Print("Previous versions timestamps: ")
 	for _, prev := range v.Prev {
-		fmt.Printf("%f ", prev.TS)
+		log.Printf("%f ", prev.TS)
 	}
-	fmt.Println()
+	log.Println()
 }

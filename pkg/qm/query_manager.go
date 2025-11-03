@@ -2,7 +2,6 @@ package qm
 
 import (
 	"fmt"
-	"log"
 	"math/rand"
 	"net"
 	"net/rpc"
@@ -10,20 +9,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pjavanrood/tinygraph/internal/util"
 	"github.com/pjavanrood/tinygraph/internal/config"
 	"github.com/pjavanrood/tinygraph/internal/types"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
+var log = util.New("QueryManager")
+
 // QueryManager handles client queries and coordinates shards
 type QueryManager struct {
-	config *config.Config
+	config         *config.Config
+	replicaManager *ReplicaManager
 }
 
 // NewQueryManager creates a new query manager instance
 func NewQueryManager(cfg *config.Config) *QueryManager {
 	return &QueryManager{
-		config: cfg,
+		config:         cfg,
+		replicaManager: NewReplicaManager(cfg),
 	}
 }
 
@@ -58,7 +62,14 @@ func (qm *QueryManager) addVertexToShard(shardConfig *config.ShardConfig, req *r
 	log.Printf("Adding vertex to shard %d", shardConfig.ID)
 
 	// Connect to the shard
-	addr := shardConfig.GetAddress()
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
 	client, err := rpc.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
@@ -83,7 +94,14 @@ func (qm *QueryManager) addEdgeToShard(shardConfig *config.ShardConfig, req *rpc
 	log.Printf("Adding edge to shard %d", shardConfig.ID)
 
 	// Connect to the shard
-	addr := shardConfig.GetAddress()
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
 	client, err := rpc.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
@@ -108,7 +126,14 @@ func (qm *QueryManager) deleteEdgeToShard(shardConfig *config.ShardConfig, req *
 	log.Printf("Deleting edge to shard %d", shardConfig.ID)
 
 	// Connect to the shard
-	addr := shardConfig.GetAddress()
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
 	client, err := rpc.Dial("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
@@ -133,7 +158,14 @@ func (qm *QueryManager) getNeighborsToShard(shardConfig *config.ShardConfig, req
 	log.Printf("Getting neighbors to shard %d", shardConfig.ID)
 
 	// Connect to the shard
-	addr := shardConfig.GetAddress()
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
 	client, err := rpc.Dial("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
@@ -330,6 +362,9 @@ func (qm *QueryManager) Start() error {
 
 	log.Printf("Query Manager RPC server listening on %s", addr)
 	log.Printf("Connected to %d shards", len(qm.config.Shards))
+
+	// Start the replica manager
+	qm.replicaManager.Start()
 
 	// Accept and serve connections
 	for {

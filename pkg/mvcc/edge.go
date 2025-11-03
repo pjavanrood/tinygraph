@@ -2,7 +2,6 @@ package mvcc
 
 import (
 	"slices"
-	"fmt"
 	"github.com/pjavanrood/tinygraph/internal/types"
 )
 
@@ -83,12 +82,12 @@ func (e *Edge) AliveAt(ts types.Timestamp) bool {
 	return timestamped != nil && !timestamped.Destroyed
 }
 
-func (e *Edge) Print() {
-	fmt.Printf("Edge %s -> %s at timestamp %f\n", e.FromID, e.ToID, e.TS)
-	fmt.Printf("Destroyed: %t\n", e.Destroyed)
-	fmt.Print("Previous versions timestamps: ")
+func (e *Edge) Log() {
+	log.Printf("Edge %s -> %s at timestamp %f\n", e.FromID, e.ToID, e.TS)
+	log.Printf("Destroyed: %t\n", e.Destroyed)
+	log.Print("Previous versions timestamps: ")
 	for _, prev := range e.Prev {
-		fmt.Printf("%f ", prev.TS)
+		log.Printf("%f ", prev.TS)
 	}
-	fmt.Println()
+	log.Println()
 }

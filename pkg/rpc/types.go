@@ -106,3 +106,10 @@ type BFSRequest struct {
 type BFSResponse struct {
 	Vertices []types.VertexId // The IDs of the vertices in the BFS
 }
+
+// ------------------------------------------------------------
+
+// Raft leadership request(none) and response
+type RaftLeadershipRequest struct {}
+
+type RaftLeadershipResponse string
