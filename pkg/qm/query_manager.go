@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pjavanrood/tinygraph/internal/util"
 	"github.com/pjavanrood/tinygraph/internal/config"
 	"github.com/pjavanrood/tinygraph/internal/types"
+	"github.com/pjavanrood/tinygraph/internal/util"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
@@ -20,14 +20,14 @@ var log = util.New("QueryManager")
 // QueryManager handles client queries and coordinates shards
 type QueryManager struct {
 	config         *config.Config
-	replicaManager *ReplicaManager
+	replicaManager ReplicaManager
 }
 
 // NewQueryManager creates a new query manager instance
 func NewQueryManager(cfg *config.Config) *QueryManager {
 	return &QueryManager{
 		config:         cfg,
-		replicaManager: NewReplicaManager(cfg),
+		replicaManager: NewPushBasedReplicaManager(cfg),
 	}
 }
 
@@ -351,6 +351,10 @@ func (qm *QueryManager) Start() error {
 	err := server.Register(qm)
 	if err != nil {
 		return fmt.Errorf("failed to register RPC service: %v", err)
+	}
+	err = server.Register(qm.replicaManager)
+	if err != nil {
+		return fmt.Errorf("failed to register replica manager RPC service: %v", err)
 	}
 
 	// Listen on the specified port from config

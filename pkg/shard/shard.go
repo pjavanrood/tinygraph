@@ -349,6 +349,11 @@ func NewShard(cfg *config.Config, shardID int, replicaID int) (*Shard, error) {
 		return nil, fmt.Errorf("failed to create raft node: %w", err)
 	}
 
+	// Setup Leader Election Observer
+	// The observer will watch for leader changes and notify the query manager
+	qmAddress := fmt.Sprintf("%s:%d", cfg.QueryManager.Host, cfg.QueryManager.Port)
+	SetupLeaderElectionObserver(raftNode, shardID, raftConfig.LocalID, qmAddress)
+
 	s.raft = raftNode
 
 	// Bootstrap the cluster if this is the bootstrap replica

@@ -113,3 +113,10 @@ type BFSResponse struct {
 type RaftLeadershipRequest struct {}
 
 type RaftLeadershipResponse string
+
+type NotifyLeaderIDUpdateRequest struct {
+	ShardID int
+	LeaderID string
+}
+
+type NotifyLeaderIDUpdateResponse struct {}
