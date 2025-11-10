@@ -3,17 +3,19 @@ package main
 import (
 	"flag"
 	"fmt"
-	"log"
 	"net/rpc"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/pjavanrood/tinygraph/internal/util"
 	"github.com/pjavanrood/tinygraph/internal/config"
 	"github.com/pjavanrood/tinygraph/internal/types"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
+
+var log = util.New("Client")
 
 type GraphClient struct {
 	cfg         *config.Config

@@ -23,9 +23,19 @@ type QueryManagerConfig struct {
 
 // ShardConfig represents a single shard's configuration
 type ShardConfig struct {
-	ID   int    `yaml:"id"`
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	ID       int             `yaml:"id"`
+	Replicas []ReplicaConfig `yaml:"replicas"`
+}
+
+// ReplicaConfig represents a single replica's configuration within a shard
+type ReplicaConfig struct {
+	ID        int    `yaml:"id"`
+	RPCHost   string `yaml:"rpc_host"`
+	RPCPort   int    `yaml:"rpc_port"`
+	RaftHost  string `yaml:"raft_host"`
+	RaftPort  int    `yaml:"raft_port"`
+	RaftDir   string `yaml:"raft_dir"`
+	Bootstrap bool   `yaml:"bootstrap"`
 }
 
 // PartitioningConfig defines how data is partitioned across shards
@@ -83,17 +93,54 @@ func (c *Config) Validate() error {
 		}
 		shardIDs[shard.ID] = true
 
-		if shard.Port <= 0 || shard.Port > 65535 {
-			return fmt.Errorf("invalid port for shard %d: %d", shard.ID, shard.Port)
+		// Validate replicas
+		if len(shard.Replicas) == 0 {
+			return fmt.Errorf("shard %d must have at least one replica", shard.ID)
 		}
-		if shard.Host == "" {
-			return fmt.Errorf("host cannot be empty for shard %d", shard.ID)
+
+		replicaIDs := make(map[int]bool)
+		bootstrapCount := 0
+		for _, replica := range shard.Replicas {
+			if replica.ID < 0 {
+				return fmt.Errorf("invalid replica ID: %d for shard %d", replica.ID, shard.ID)
+			}
+			if replicaIDs[replica.ID] {
+				return fmt.Errorf("duplicate replica ID: %d for shard %d", replica.ID, shard.ID)
+			}
+			replicaIDs[replica.ID] = true
+
+			if replica.RPCPort <= 0 || replica.RPCPort > 65535 {
+				return fmt.Errorf("invalid RPC port for shard %d replica %d: %d", shard.ID, replica.ID, replica.RPCPort)
+			}
+			if replica.RaftPort <= 0 || replica.RaftPort > 65535 {
+				return fmt.Errorf("invalid Raft port for shard %d replica %d: %d", shard.ID, replica.ID, replica.RaftPort)
+			}
+			if replica.RPCHost == "" {
+				return fmt.Errorf("RPC host cannot be empty for shard %d replica %d", shard.ID, replica.ID)
+			}
+			if replica.RaftHost == "" {
+				return fmt.Errorf("Raft host cannot be empty for shard %d replica %d", shard.ID, replica.ID)
+			}
+			if replica.RaftDir == "" {
+				return fmt.Errorf("Raft directory cannot be empty for shard %d replica %d", shard.ID, replica.ID)
+			}
+			if replica.Bootstrap {
+				bootstrapCount++
+			}
+		}
+
+		// Ensure exactly one replica is set to bootstrap per shard
+		if bootstrapCount == 0 {
+			return fmt.Errorf("shard %d must have exactly one replica with bootstrap=true", shard.ID)
+		}
+		if bootstrapCount > 1 {
+			return fmt.Errorf("shard %d has %d replicas with bootstrap=true, but only one is allowed", shard.ID, bootstrapCount)
 		}
 	}
 
 	// Validate Partitioning
 	validAlgorithms := map[string]bool{
-		"hash":            true,
+		"hash": true,
 	}
 	if !validAlgorithms[c.Partitioning.Algorithm] {
 		return fmt.Errorf("invalid partitioning algorithm: %s (valid options: hash)", c.Partitioning.Algorithm)
@@ -101,20 +148,29 @@ func (c *Config) Validate() error {
 
 	// Validate Replication
 	validStrategies := map[string]bool{
-		"none":                       true,
-		"read_write_primary":         true,
-		"read_replica_write_primary": true,
+		"none": true,
+		"raft": true,
 	}
 	if !validStrategies[c.Replication.Strategy] {
-		return fmt.Errorf("invalid replication strategy: %s (valid options: none, master_slave, multi_master)", c.Replication.Strategy)
+		return fmt.Errorf("invalid replication strategy: %s (valid options: none, raft)", c.Replication.Strategy)
 	}
 
 	if c.Replication.ReplicationFactor < 0 {
 		return fmt.Errorf("replication factor cannot be negative: %d", c.Replication.ReplicationFactor)
 	}
 
-	if c.Replication.Strategy != "none" && c.Replication.ReplicationFactor == 0 {
-		return fmt.Errorf("replication factor must be > 0 when replication strategy is not 'none'")
+	if c.Replication.Strategy == "raft" && c.Replication.ReplicationFactor == 0 {
+		return fmt.Errorf("replication factor must be > 0 when replication strategy is 'raft'")
+	}
+
+	// Validate that replication factor matches number of replicas
+	if c.Replication.Strategy == "raft" {
+		for _, shard := range c.Shards {
+			if len(shard.Replicas) != c.Replication.ReplicationFactor {
+				return fmt.Errorf("shard %d has %d replicas but replication_factor is %d",
+					shard.ID, len(shard.Replicas), c.Replication.ReplicationFactor)
+			}
+		}
 	}
 
 	return nil
@@ -130,7 +186,36 @@ func (c *Config) GetShardByID(id int) (*ShardConfig, error) {
 	return nil, fmt.Errorf("shard with ID %d not found", id)
 }
 
-// GetShardAddress returns the full address (host:port) for a shard
-func (s *ShardConfig) GetAddress() string {
-	return fmt.Sprintf("%s:%d", s.Host, s.Port)
+// GetReplicaByID returns a replica configuration by its ID
+func (s *ShardConfig) GetReplicaByID(replicaID int) (*ReplicaConfig, error) {
+	for _, replica := range s.Replicas {
+		if replica.ID == replicaID {
+			return &replica, nil
+		}
+	}
+	return nil, fmt.Errorf("replica with ID %d not found in shard %d", replicaID, s.ID)
+}
+
+// GetAddress returns an RPC address to connect to this shard
+// For now, this returns the first replica's address
+func (s *ShardConfig) GetReplicaAddress(replicaID int) (string, error) {
+	if len(s.Replicas) == 0 {
+		return "", fmt.Errorf("no replicas found in shard %d", s.ID)	
+	}
+	for _, replica := range s.Replicas {
+		if replica.ID == replicaID {
+			return replica.GetRPCAddress(), nil
+		}
+	}
+	return "", fmt.Errorf("replica with ID %d not found in shard %d", replicaID, s.ID)
+}
+
+// GetRPCAddress returns the full RPC address (host:port) for a replica
+func (r *ReplicaConfig) GetRPCAddress() string {
+	return fmt.Sprintf("%s:%d", r.RPCHost, r.RPCPort)
+}
+
+// GetRaftAddress returns the full Raft address (host:port) for a replica
+func (r *ReplicaConfig) GetRaftAddress() string {
+	return fmt.Sprintf("%s:%d", r.RaftHost, r.RaftPort)
 }

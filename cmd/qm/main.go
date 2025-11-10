@@ -2,11 +2,13 @@ package main
 
 import (
 	"flag"
-	"log"
 
+	"github.com/pjavanrood/tinygraph/internal/util"
 	"github.com/pjavanrood/tinygraph/internal/config"
 	"github.com/pjavanrood/tinygraph/pkg/qm"
 )
+
+var log = util.New("QueryManager")
 
 func main() {
 	// Parse command-line flags

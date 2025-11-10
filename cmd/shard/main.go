@@ -2,39 +2,71 @@ package main
 
 import (
 	"flag"
-	"log"
 
+	"github.com/pjavanrood/tinygraph/internal/util"
 	"github.com/pjavanrood/tinygraph/internal/config"
 	"github.com/pjavanrood/tinygraph/pkg/shard"
 )
 
+var log = util.New("Shard")
+
 func main() {
 	// Parse command-line flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
-	shardNum := flag.Int("id", -1, "The Shard ID to be used")
+	shardID := flag.Int("shard-id", -1, "The Shard ID to be used")
+	replicaID := flag.Int("replica-id", -1, "The Replica ID within the shard")
 	flag.Parse()
 
-	log.Println("Starting Shard...")
+	log.Println("Starting Shard Replica...")
 
 	// Load configuration
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
-		log.Fatalf("Failed to load configuratioN: %v", err)
-		return
+		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
 	log.Printf("Loaded configuration with %d shards", len(cfg.Shards))
 	log.Printf("Partitioning: %s, Replication: %s", cfg.Partitioning.Algorithm, cfg.Replication.Strategy)
 
-	// try to start up self if within shard limit (if ie. 3 shards, then only shard IDs of 0, 1, 2 are valid)
-	if *shardNum == -1 || *shardNum >= len(cfg.Shards) {
-		log.Fatalf("Invalid Shard ID, %d, for given configuration (%d shards), ensure proper shard ID is passed with '-id' flag", *shardNum, len(cfg.Shards))
-		return
+	// Validate shard ID
+	if *shardID == -1 || *shardID >= len(cfg.Shards) {
+		log.Fatalf("Invalid Shard ID: %d (must be between 0 and %d), use -shard-id flag", *shardID, len(cfg.Shards)-1)
 	}
 
-	shard := shard.NewShard(cfg, *shardNum)
-	if err := shard.Start(); err != nil {
-		log.Fatalf("Failed to start Shard %d: %v", *shardNum, err)
-		return
+	// Get shard configuration
+	shardConfig, err := cfg.GetShardByID(*shardID)
+	if err != nil {
+		log.Fatalf("Failed to get shard configuration: %v", err)
+	}
+
+	// Validate replica ID
+	if *replicaID == -1 || *replicaID >= len(shardConfig.Replicas) {
+		log.Fatalf("Invalid Replica ID: %d for shard %d (must be between 0 and %d), use -replica-id flag",
+			*replicaID, *shardID, len(shardConfig.Replicas)-1)
+	}
+
+	// Get replica configuration
+	replicaConfig, err := shardConfig.GetReplicaByID(*replicaID)
+	if err != nil {
+		log.Fatalf("Failed to get replica configuration: %v", err)
+	}
+
+	log.Printf("Starting Shard %d, Replica %d", *shardID, *replicaID)
+	log.Printf("RPC Address: %s", replicaConfig.GetRPCAddress())
+	log.Printf("Raft Address: %s", replicaConfig.GetRaftAddress())
+	log.Printf("Raft Data Directory: %s", replicaConfig.RaftDir)
+	log.Printf("Bootstrap: %v", replicaConfig.Bootstrap)
+
+	// Create Shard with Raft consensus
+	shardInstance, err := shard.NewShard(cfg, *shardID, *replicaID)
+	if err != nil {
+		log.Fatalf("Failed to create Shard: %v", err)
+	}
+
+	log.Printf("Shard created successfully for Shard %d, Replica %d", *shardID, *replicaID)
+
+	// Start the shard server (blocks)
+	if err := shardInstance.Start(replicaConfig.GetRPCAddress()); err != nil {
+		log.Fatalf("Failed to start Shard %d Replica %d: %v", *shardID, *replicaID, err)
 	}
 }
