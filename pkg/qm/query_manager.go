@@ -182,6 +182,34 @@ func (qm *QueryManager) getNeighborsToShard(shardConfig *config.ShardConfig, req
 	return resp.Neighbors, nil
 }
 
+func (qm *QueryManager) fetchAllFromShard(shardConfig *config.ShardConfig, req *rpcTypes.FetchAllToShardRequest) ([]rpcTypes.VertexInfo, error) {
+	log.Printf("Fetching all vertices from shard %d", shardConfig.ID)
+
+	// Connect to the shard
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
+	client, err := rpc.Dial("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
+	}
+	defer client.Close()
+
+	// Make the RPC call to fetch all vertices
+	var resp rpcTypes.FetchAllToShardResponse
+	err = client.Call("Shard.FetchAll", req, &resp)
+	if err != nil {
+		return nil, fmt.Errorf("RPC call to shard %d failed: %w", shardConfig.ID, err)
+	}
+
+	return resp.Vertices, nil
+}
+
 // AddVertex is the RPC handler for adding a vertex
 func (qm *QueryManager) AddVertex(req *rpcTypes.AddVertexRequest, resp *rpcTypes.AddVertexResponse) error {
 	log.Printf("Received AddVertex request")
@@ -341,6 +369,28 @@ func (qm *QueryManager) BFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSResponse
 		i++
 	}
 
+	return nil
+}
+
+// FetchAll is the RPC handler for fetching all vertices from all shards
+func (qm *QueryManager) FetchAll(req *rpcTypes.FetchAllRequest, resp *rpcTypes.FetchAllResponse) error {
+	log.Printf("Received FetchAll request")
+
+	// Initialize the response map
+	resp.ShardVertices = make(map[int][]rpcTypes.VertexInfo)
+
+	// Iterate through all shards and fetch vertices from each
+	for _, shardConfig := range qm.config.Shards {
+		vertices, err := qm.fetchAllFromShard(&shardConfig, &rpcTypes.FetchAllToShardRequest{})
+		if err != nil {
+			log.Printf("Failed to fetch vertices from shard %d: %v", shardConfig.ID, err)
+			return fmt.Errorf("failed to fetch vertices from shard %d: %w", shardConfig.ID, err)
+		}
+		resp.ShardVertices[shardConfig.ID] = vertices
+		log.Printf("Fetched %d vertices from shard %d", len(vertices), shardConfig.ID)
+	}
+
+	log.Printf("Successfully fetched vertices from all %d shards", len(qm.config.Shards))
 	return nil
 }
 

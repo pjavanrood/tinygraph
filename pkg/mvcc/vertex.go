@@ -21,12 +21,12 @@ type Vertex struct {
 }
 
 // NewVertex creates the first version of a vertex.
-func NewVertex(id types.VertexId, ts types.Timestamp) *Vertex {
+func NewVertex(id types.VertexId, prop *VertexProp, ts types.Timestamp) *Vertex {
 	return &Vertex{
 		ID:    id,
 		Edges: make(map[types.VertexId]*Edge),
 		TS:    ts,
-		Prop:  nil,
+		Prop:  prop,
 		Prev:  nil, // no previous versions
 	}
 }

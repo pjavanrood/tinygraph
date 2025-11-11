@@ -109,14 +109,37 @@ type BFSResponse struct {
 
 // ------------------------------------------------------------
 
+// FetchAll request and response
+type VertexInfo struct {
+	VertexID   types.VertexId   // The vertex ID
+	Properties types.Properties // The vertex properties
+	Timestamp  types.Timestamp  // The timestamp of the vertex
+}
+
+type FetchAllRequest struct {
+}
+
+type FetchAllResponse struct {
+	ShardVertices map[int][]VertexInfo // Map from shard ID to list of vertex info
+}
+
+type FetchAllToShardRequest struct {
+}
+
+type FetchAllToShardResponse struct {
+	Vertices []VertexInfo // The vertex information for all vertices in the shard
+}
+
+// ------------------------------------------------------------
+
 // Raft leadership request(none) and response
-type RaftLeadershipRequest struct {}
+type RaftLeadershipRequest struct{}
 
 type RaftLeadershipResponse string
 
 type NotifyLeaderIDUpdateRequest struct {
-	ShardID int
+	ShardID  int
 	LeaderID string
 }
 
-type NotifyLeaderIDUpdateResponse struct {}
+type NotifyLeaderIDUpdateResponse struct{}

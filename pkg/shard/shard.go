@@ -293,6 +293,20 @@ func (s *Shard) GetNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *rpcT
 	return s.shardFSM.getNeighbors(req, resp)
 }
 
+// FetchAll is the RPC handler for fetching all vertex IDs in the shard with linearizable read semantics
+func (s *Shard) FetchAll(req rpcTypes.FetchAllToShardRequest, resp *rpcTypes.FetchAllToShardResponse) error {
+	// Use VerifyLeader to ensure we have up-to-date state and are still the leader
+	// This provides linearizable read semantics without going through the Raft log
+	if err := s.raft.VerifyLeader().Error(); err != nil {
+		return fmt.Errorf("not leader or unable to verify leadership: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.shardFSM.fetchAll(req, resp)
+}
+
 func (s *Shard) GetLeaderID(req rpcTypes.RaftLeadershipRequest, resp *rpcTypes.RaftLeadershipResponse) error {
 	_, leaderID := s.raft.LeaderWithID()
 	*resp = rpcTypes.RaftLeadershipResponse(leaderID)

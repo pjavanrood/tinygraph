@@ -41,8 +41,10 @@ func (s *ShardFSM) addVertex(req rpcTypes.AddVertexToShardRequest, resp *rpcType
 		return fmt.Errorf("Vertex with ID \"%s\" already exists and is not deleted", req.VertexID)
 	}
 
+	prop := mvccTypes.VertexProp(req.Properties)
+	
 	// we add this new vertex to our map
-	vertex := mvccTypes.NewVertex(req.VertexID, req.Timestamp)
+	vertex := mvccTypes.NewVertex(req.VertexID, &prop, req.Timestamp)
 
 	s.vertices[VertexId(req.VertexID)] = vertex
 	return nil
@@ -110,6 +112,24 @@ func (s *ShardFSM) getNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *r
 	return nil
 }
 
+// fetchAll retrieves all vertex IDs and properties in the shard
+// This is an internal method called by Shard
+func (s *ShardFSM) fetchAll(req rpcTypes.FetchAllToShardRequest, resp *rpcTypes.FetchAllToShardResponse) error {
+	resp.Vertices = make([]rpcTypes.VertexInfo, 0, len(s.vertices))
+	for vertexID, vertex := range s.vertices {
+		vertexInfo := rpcTypes.VertexInfo{
+			VertexID:  internalTypes.VertexId(vertexID),
+			Timestamp: vertex.TS,
+		}
+		// Convert VertexProp to Properties if not nil
+		if vertex.Prop != nil {
+			vertexInfo.Properties = internalTypes.Properties(*vertex.Prop)
+		}
+		resp.Vertices = append(resp.Vertices, vertexInfo)
+	}
+	return nil
+}
+
 // newShardFSM creates a new ShardFSM instance
 func newShardFSM(cfg *config.Config, id int) *ShardFSM {
 	return &ShardFSM{
@@ -118,4 +138,3 @@ func newShardFSM(cfg *config.Config, id int) *ShardFSM {
 		config:   cfg,
 	}
 }
-
