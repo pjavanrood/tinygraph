@@ -24,6 +24,76 @@ For detailed testing documentation, see [test/E2E_TEST_README.md](test/E2E_TEST_
 
 ---
 
+### Using TinyGraph
+
+#### 1. Generate Workload Graphs
+
+Use `generate_rmat.py` to create synthetic R-MAT graphs for testing and benchmarking:
+
+```bash
+# Generate a small graph (16 nodes, 128 edges)
+python3 cmd/client/workloads/generate_rmat.py --scale 4 --edge-factor 8 --output workload.txt
+
+# Generate a larger graph (256 nodes, 2048 edges)
+python3 cmd/client/workloads/generate_rmat.py --scale 8 --edge-factor 8 --output large_workload.txt
+
+# Visualize an existing workload file (requires networkx and matplotlib)
+python3 cmd/client/workloads/generate_rmat.py --visualize-file workload.txt
+```
+
+**Parameters:**
+- `--scale N`: Number of nodes = 2^N (default: 4)
+- `--edge-factor N`: Number of edges = nodes × N (default: 8)
+- `--output FILE`: Output file path (default: rmat_graph.txt)
+- `--visualize`: Generate visualization when creating a graph
+- `--visualize-file FILE`: Visualize an existing workload file
+
+#### 2. Start the Cluster
+
+Use the `start-cluster` tool to launch all shard replicas and the query manager:
+
+```bash
+# Build the start-cluster tool
+go build -o start-cluster cmd/start-cluster/main.go
+
+# Start cluster using default config
+./start-cluster
+
+# Start cluster with custom config
+./start-cluster 3_shard_3_replica_config.yaml
+```
+
+The cluster will start all shard replicas first, wait for initialization, then start the query manager. Press `Ctrl+C` to gracefully shut down the entire cluster.
+
+#### 3. Run Workloads
+
+Use the `client` tool to execute workload files against the running cluster:
+
+```bash
+# Build the client tool
+go build -o client cmd/client/main.go
+
+# Run a workload with default config
+./client -workload cmd/client/workloads/simple_graph.txt
+
+# Run a workload with custom config
+./client -config config.yaml -workload cmd/client/workloads/rmat_graph.txt
+```
+
+**Workload Format:**
+- `A from to [weight]` - Add edge between vertices (creates vertices if needed)
+- `D from to` - Delete edge between vertices
+- `Q` - Fetch all vertices and edges from all shards
+- `Q vertex radius` - Perform BFS from vertex with given radius
+
+The client automatically verifies BFS results against a local graph representation.
+
+---
+
+### Manual Cluster Setup
+
+Alternatively, you can start components manually:
+
 #### 1. Start the Query Manager (QM)
 
 The Query Manager coordinates client requests and routes them to shards:
@@ -197,7 +267,7 @@ Shards are the **stateful layer** where vertices and edges are stored.
 ### **3.3 Data Structures (Conceptual)**
 
 The following conceptual structures are maintained within each Shard:
-
+```go
 // Stores the version history for MVCC  
 type Vertex struct {  
 	id          string  
@@ -223,7 +293,7 @@ type ShardRSM struct {
 	mu          sync.RWMutex  
 	vertices   map\[string\]\*Vertex   
 }
-
+```
 ### **3.4 Supported Operations**
 
 The system supports the following client-facing operations, which include a **timestamp** argument to enable MVCC-based consistency:
@@ -310,9 +380,49 @@ Clients attach a timestamp (e.g., from an NTP server) to their operations.
 
 **Baseline BFS Pseudocode:**
 
-| function DISTRIBUTED\_BFS(start\_vertex, radius, timestamp):    // 1\. Initialization    Visited \= {start\_vertex}    Frontier \= {start\_vertex}    Results \= {start\_vertex}        // 2\. Traversal Loop (up to max radius)    for level from 1 to radius:        if Frontier is empty:            break                    // Map to group vertices by the shard responsible for them        ShardRequests \= MAP(ShardID \-\> List of Vertices)                // Group all vertices in the current Frontier by their Shard ID        for vertex in Frontier:            shard\_id \= GET\_SHARD\_ID(vertex)            ShardRequests\[shard\_id\].append(vertex)                    NewNeighbors \= SET()                // 3\. Batched Concurrent Query        // Send a batch of neighbor-lookup requests to each relevant Shard        // All requests run in parallel (ASYNC)        AllResponses \= ASYNC\_BATCH\_CALL(            for ShardID, VertexList in ShardRequests:                SHARD\_RPC:GetNeighbors\_Batch(VertexList, timestamp)        )                // 4\. Process Responses and Update State        for response in AllResponses:            for neighbor\_id in response:                if neighbor\_id is not in Visited:                    Visited.add(neighbor\_id)                    Results.add(neighbor\_id)                    NewNeighbors.add(neighbor\_id)                            // Set up the next frontier        Frontier \= NewNeighbors            return Results |
-| :---- |
-
+```
+function DISTRIBUTED_BFS(start_vertex, radius, timestamp):
+    // 1. Initialization
+    Visited = {start_vertex}
+    Frontier = {start_vertex}
+    Results = {start_vertex}
+    
+    // 2. Traversal Loop (up to max radius)
+    for level from 1 to radius:
+        if Frontier is empty:
+            break
+            
+        // Map to group vertices by the shard responsible for them
+        ShardRequests = MAP(ShardID -> List of Vertices)
+        
+        // Group all vertices in the current Frontier by their Shard ID
+        for vertex in Frontier:
+            shard_id = GET_SHARD_ID(vertex)
+            ShardRequests[shard_id].append(vertex)
+            
+        NewNeighbors = SET()
+        
+        // 3. Batched Concurrent Query
+        // Send a batch of neighbor-lookup requests to each relevant Shard
+        // All requests run in parallel (ASYNC)
+        AllResponses = ASYNC_BATCH_CALL(
+            for ShardID, VertexList in ShardRequests:
+                SHARD_RPC:GetNeighbors_Batch(VertexList, timestamp)
+        )
+        
+        // 4. Process Responses and Update State
+        for response in AllResponses:
+            for neighbor_id in response:
+                if neighbor_id is not in Visited:
+                    Visited.add(neighbor_id)
+                    Results.add(neighbor_id)
+                    NewNeighbors.add(neighbor_id)
+                    
+        // Set up the next frontier
+        Frontier = NewNeighbors
+        
+    return Results
+```
 **Optimized BFS** (\# TODO @Oleg)
 
 High level overview – developing this function fully is part of our milestones as this is very complex:

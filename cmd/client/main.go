@@ -236,7 +236,7 @@ func (gc *GraphClient) BFS(startVertexID string, radius int) {
 
 	// Convert internal IDs to external IDs
 	verticesExternalIDs := []string{}
-	fmt.Println("BFS result:")
+	fmt.Println("BFS results for vertex", startVertexID, "with radius", radius, ":")
 	for _, vertexInternalID := range verticesInternalIDs {
 		vertex, err := gc.getExternalVertexID(vertexInternalID)
 		if err != nil {
