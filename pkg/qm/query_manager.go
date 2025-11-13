@@ -154,6 +154,60 @@ func (qm *QueryManager) deleteEdgeToShard(shardConfig *config.ShardConfig, req *
 	return nil
 }
 
+func (qm *QueryManager) getVertexAtToShard(shardConfig *config.ShardConfig, req *rpcTypes.GetVertexAtShardRequest, resp *rpcTypes.GetVertexAtShardResponse) error {
+	log.Printf("GetVertexAt to shard %d", shardConfig.ID)
+
+	// Connect to the shard
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
+	client, err := rpc.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
+	}
+	defer client.Close()
+
+	// Make the RPC call
+	err = client.Call("Shard.GetVertexAt", req, resp)
+	if err != nil {
+		return fmt.Errorf("RPC call to shard %d failed: %w", shardConfig.ID, err)
+	}
+
+	return nil
+}
+
+func (qm *QueryManager) getEdgeAtToShard(shardConfig *config.ShardConfig, req *rpcTypes.GetEdgeAtShardRequest, resp *rpcTypes.GetEdgeAtShardResponse) error {
+	log.Printf("GetEdgeAt to shard %d", shardConfig.ID)
+
+	// Connect to the shard
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
+	client, err := rpc.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
+	}
+	defer client.Close()
+
+	// Make the RPC call
+	err = client.Call("Shard.GetEdgeAt", req, resp)
+	if err != nil {
+		return fmt.Errorf("RPC call to shard %d failed: %w", shardConfig.ID, err)
+	}
+
+	return nil
+}
+
 func (qm *QueryManager) getNeighborsToShard(shardConfig *config.ShardConfig, req *rpcTypes.GetNeighborsToShardRequest) ([]types.VertexId, error) {
 	log.Printf("Getting neighbors to shard %d", shardConfig.ID)
 
@@ -238,6 +292,36 @@ func (qm *QueryManager) AddVertex(req *rpcTypes.AddVertexRequest, resp *rpcTypes
 	return nil
 }
 
+// GetVertex is the RPC handler for getting the latest vertex
+func (qm *QueryManager) GetVertexAt(req *rpcTypes.GetVertexAtRequest, resp *rpcTypes.GetVertexResponse) error {
+	log.Printf("Received GetVertex request")
+
+	shardConfig := RandomPartitioner(qm.config)
+	// Add the vertex to the shard
+	var respShard rpcTypes.GetVertexAtShardResponse
+	err := qm.getVertexAtToShard(shardConfig, &rpcTypes.GetVertexAtShardRequest{
+		Vertex:    req.Vertex,
+		Timestamp: req.Timestamp,
+	}, &respShard)
+	if err != nil {
+		log.Printf("Failed to add vertex: %v", err)
+		resp.Exists = false
+		return err
+	}
+
+	resp.Exists = respShard.Exists
+	resp.Properties = respShard.Properties
+	resp.Timestamp = respShard.Timestamp
+	return nil
+}
+
+func (qm *QueryManager) GetVertex(req *rpcTypes.GetVertexRequest, resp *rpcTypes.GetVertexResponse) error {
+	return qm.GetVertexAt(&rpcTypes.GetVertexAtRequest{
+		Vertex:    req.Vertex,
+		Timestamp: qm.generateTimestamp(),
+	}, resp)
+}
+
 // AddEdge is the RPC handler for adding an edge
 func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.AddEdgeResponse) error {
 	log.Printf("Received AddEdge request")
@@ -273,6 +357,39 @@ func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.Add
 	resp.Success = true
 	resp.Timestamp = timestamp
 	return nil
+}
+
+// GetEdge is the RPC handler for getting the latest Edge
+func (qm *QueryManager) GetEdgeAt(req *rpcTypes.GetEdgeAtRequest, resp *rpcTypes.GetEdgeResponse) error {
+	log.Printf("Received GetEdge request")
+
+	shardConfig := RandomPartitioner(qm.config)
+
+	// Add the vertex to the shard
+	var respShard rpcTypes.GetEdgeAtShardResponse
+	err := qm.getEdgeAtToShard(shardConfig, &rpcTypes.GetEdgeAtShardRequest{
+		FromVertex: req.FromVertex,
+		ToVertex:   req.ToVertex,
+		Timestamp:  req.Timestamp,
+	}, &respShard)
+	if err != nil {
+		log.Printf("Failed to add vertex: %v", err)
+		resp.Exists = false
+		return err
+	}
+
+	resp.Exists = respShard.Exists
+	resp.Properties = respShard.Properties
+	resp.Timestamp = respShard.Timestamp
+	return nil
+}
+
+func (qm *QueryManager) GetEdge(req *rpcTypes.GetEdgeRequest, resp *rpcTypes.GetEdgeResponse) error {
+	return qm.GetEdgeAt(&rpcTypes.GetEdgeAtRequest{
+		FromVertex: req.FromVertex,
+		ToVertex:   req.ToVertex,
+		Timestamp:  qm.generateTimestamp(),
+	}, resp)
 }
 
 // DeleteEdge is the RPC handler for deleting an edge

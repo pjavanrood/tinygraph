@@ -36,6 +36,35 @@ type AddVertexToShardResponse struct {
 
 // ------------------------------------------------------------
 
+// GetVertex request and response
+type GetVertexRequest struct {
+	Vertex types.VertexId // The ID of the vertex
+}
+
+type GetVertexAtRequest struct {
+	Vertex    types.VertexId  // The ID of the vertex
+	Timestamp types.Timestamp // The timestamp at which we wish to observe the vertex
+}
+
+type GetVertexResponse struct {
+	Exists     bool             // Whether the vertex exists at the timestamp
+	Properties types.Properties // Key-value properties for the vertex
+	Timestamp  types.Timestamp  // The latest timestamp of the Vertex at the time of query
+}
+
+type GetVertexAtShardRequest struct {
+	Vertex    types.VertexId
+	Timestamp types.Timestamp // The timestamp at which we wish to observe the vertex
+}
+
+type GetVertexAtShardResponse struct {
+	Exists     bool             // Whether the vertex exists at the timestamp
+	Properties types.Properties // Key-value properties for the vertex
+	Timestamp  types.Timestamp  // The latest timestamp of the Vertex at the time of query
+}
+
+// ------------------------------------------------------------
+
 // AddEdge request and response
 type AddEdgeRequest struct {
 	FromVertexID types.VertexId   // The ID of the from vertex
@@ -57,6 +86,38 @@ type AddEdgeToShardRequest struct {
 
 type AddEdgeToShardResponse struct {
 	Success bool // Whether the operation succeeded
+}
+
+// ------------------------------------------------------------
+
+// GetVertex request and response
+type GetEdgeRequest struct {
+	FromVertex types.VertexId // The ID of the from vertex
+	ToVertex   types.VertexId // The ID of the to vertex
+}
+
+type GetEdgeAtRequest struct {
+	FromVertex types.VertexId  // The ID of the from vertex
+	ToVertex   types.VertexId  // The ID of the to vertex
+	Timestamp  types.Timestamp // The timestamp at which we wish to observe the Edge
+}
+
+type GetEdgeResponse struct {
+	Exists     bool             // Whether the Edge exists at the timestamp
+	Properties types.Properties // Key-value properties for the Edge
+	Timestamp  types.Timestamp  // The latest timestamp of the Edge at the time of query
+}
+
+type GetEdgeAtShardRequest struct {
+	FromVertex types.VertexId  // The ID of the from vertex
+	ToVertex   types.VertexId  // The ID of the to vertex
+	Timestamp  types.Timestamp // The timestamp at which we wish to observe the Edge
+}
+
+type GetEdgeAtShardResponse struct {
+	Exists     bool             // Whether the Edge exists at the timestamp
+	Properties types.Properties // Key-value properties for the Edge
+	Timestamp  types.Timestamp  // The latest timestamp of the Edge at the time of query
 }
 
 // ------------------------------------------------------------
@@ -112,6 +173,7 @@ type BFSResponse struct {
 // FetchAll request and response
 type VertexInfo struct {
 	VertexID   types.VertexId   // The vertex ID
+	EdgesTo    []types.VertexId // The outgoing edges of this vertex
 	Properties types.Properties // The vertex properties
 	Timestamp  types.Timestamp  // The timestamp of the vertex
 }
