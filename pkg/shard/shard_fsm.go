@@ -2,6 +2,8 @@ package shard
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
 	internalTypes "github.com/pjavanrood/tinygraph/internal/types"
@@ -42,11 +44,70 @@ func (s *ShardFSM) addVertex(req rpcTypes.AddVertexToShardRequest, resp *rpcType
 	}
 
 	prop := mvccTypes.VertexProp(req.Properties)
-	
+
 	// we add this new vertex to our map
 	vertex := mvccTypes.NewVertex(req.VertexID, &prop, req.Timestamp)
 
 	s.vertices[VertexId(req.VertexID)] = vertex
+	return nil
+}
+
+// getVertexAt gets the vertex information at a specific timestamp
+// This is an internal method called by Shard through Raft consensus
+func (s *ShardFSM) getVertexAt(req rpcTypes.GetVertexAtShardRequest, resp *rpcTypes.GetVertexAtShardResponse) error {
+	exists := true
+	defer func() {
+		resp.Exists = exists
+	}()
+
+	// check if vertex with given ID already exists, and is not deleted
+	vertex, vertexExists := s.vertices[VertexId(req.Vertex)]
+	if !vertexExists {
+		exists = false
+		return nil
+	}
+
+	timestampedVertex := vertex.GetAt(req.Timestamp)
+	if timestampedVertex == nil {
+		exists = false
+		return nil
+	}
+
+	resp.Properties = internalTypes.Properties(*timestampedVertex.Prop)
+	resp.Timestamp = timestampedVertex.TS
+
+	return nil
+}
+
+// getEdgeAt gets the Edge information at a specific timestamp
+// This is an internal method called by Shard through Raft consensus
+func (s *ShardFSM) getEdgeAt(req rpcTypes.GetEdgeAtShardRequest, resp *rpcTypes.GetEdgeAtShardResponse) error {
+	exists := true
+	defer func() {
+		resp.Exists = exists
+	}()
+
+	// check if vertex with given ID already exists, and is not deleted
+	vertex, vertexExists := s.vertices[VertexId(req.FromVertex)]
+	if !vertexExists {
+		exists = false
+		return nil
+	}
+
+	timestampedVertex := vertex.GetAt(req.Timestamp)
+	if edge, ok := timestampedVertex.Edges[req.ToVertex]; ok {
+		if !edge.AliveAt(req.Timestamp) {
+			exists = false
+			return nil
+		}
+
+		timestampedEdge := edge.GetAt(req.Timestamp)
+		resp.Properties = internalTypes.Properties(*timestampedEdge.Prop)
+		resp.Timestamp = timestampedEdge.TS
+		return nil
+	}
+
+	exists = false
 	return nil
 }
 
@@ -119,6 +180,7 @@ func (s *ShardFSM) fetchAll(req rpcTypes.FetchAllToShardRequest, resp *rpcTypes.
 	for vertexID, vertex := range s.vertices {
 		vertexInfo := rpcTypes.VertexInfo{
 			VertexID:  internalTypes.VertexId(vertexID),
+			EdgesTo:   slices.Collect(maps.Keys(vertex.Edges)),
 			Timestamp: vertex.TS,
 		}
 		// Convert VertexProp to Properties if not nil

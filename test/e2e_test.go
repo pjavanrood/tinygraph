@@ -18,8 +18,10 @@ import (
 
 // TestClient wraps the RPC client with helper methods
 type TestClient struct {
-	conn *rpc.Client
-	t    *testing.T
+	conn         *rpc.Client
+	t            *testing.T
+	timestampLog []types.Timestamp
+	knownVerts   []types.VertexId
 }
 
 // NewTestClient creates a new test client
@@ -40,12 +42,55 @@ func NewTestClient(t *testing.T, cfg *config.Config) *TestClient {
 	return &TestClient{
 		conn: conn,
 		t:    t,
+		// defaults to 0, which is what we want for our initial timestamp
+		timestampLog: make([]types.Timestamp, 1),
 	}
 }
 
 // Close closes the client connection
 func (c *TestClient) Close() {
 	c.conn.Close()
+}
+
+// Dumps the shared state at every timestamp logged
+func (c *TestClient) dumpTimestampedState(t *testing.T) {
+	t.Logf("========== BEGIN DUMP ==========")
+	// for each shared state, dump what the server stores at that timestamp, beginning at 0
+	for _, timestamp := range c.timestampLog {
+		t.Logf("~~~~State at timestamp %f~~~~", timestamp)
+		for shard, vertexSlice := range c.FetchAll() {
+			// get the values at the prescribed timestamp
+			t.Logf("On shard %d:", shard)
+			for _, vinfo := range vertexSlice {
+				t.Logf("|-Vertex %s at %f:", vinfo.VertexID, timestamp)
+				exists, props, ts := c.GetVertexAt(vinfo.VertexID, timestamp)
+				if exists {
+					t.Logf("  |-Exists (latest update %f)!", ts)
+					for k, v := range props {
+						t.Logf("  |-%v: %v", k, v)
+					}
+				} else {
+					t.Logf("  |-Does not exist")
+				}
+
+				t.Logf("  |-Edges: %d", len(vinfo.EdgesTo))
+				for _, vid := range vinfo.EdgesTo {
+					t.Logf("    |-Child Vertex %s at %f:", vid, timestamp)
+					exists, props, ts := c.GetEdgeAt(vinfo.VertexID, vid, timestamp)
+					if exists {
+						t.Logf("    |-Exists (latest update %f)!", ts)
+						for k, v := range props {
+							t.Logf("    |-%v: %v", k, v)
+						}
+					} else {
+						t.Logf("    |-Does not exist")
+					}
+				}
+			}
+		}
+	}
+
+	t.Logf("========== END DUMP ==========")
 }
 
 // AddVertex adds a vertex and returns the vertex ID and timestamp
@@ -60,7 +105,49 @@ func (c *TestClient) AddVertex(properties map[string]string) (types.VertexId, ty
 	if !resp.Success {
 		c.t.Fatalf("AddVertex returned success=false")
 	}
+	c.timestampLog = append(c.timestampLog, resp.Timestamp)
 	return resp.VertexID, resp.Timestamp
+}
+
+func (c *TestClient) GetVertexAt(vertexId types.VertexId, timestamp types.Timestamp) (bool, types.Properties, types.Timestamp) {
+	var resp rpcTypes.GetVertexResponse
+	err := c.conn.Call("QueryManager.GetVertexAt", &rpcTypes.GetVertexAtRequest{
+		Vertex:    vertexId,
+		Timestamp: timestamp,
+	}, &resp)
+	if err != nil {
+		c.t.Fatalf("GetVertex failed: %v", err)
+	}
+	return resp.Exists, resp.Properties, resp.Timestamp
+}
+func (c *TestClient) GetVertex(vertexId types.VertexId) (bool, types.Properties, types.Timestamp) {
+	return c.GetVertexAt(vertexId, types.Timestamp(time.Now().Unix()))
+}
+
+func (c *TestClient) GetEdgeAt(vertexFrom types.VertexId, vertexTo types.VertexId, timestamp types.Timestamp) (bool, types.Properties, types.Timestamp) {
+	var resp rpcTypes.GetEdgeResponse
+	err := c.conn.Call("QueryManager.GetVertexAt", &rpcTypes.GetEdgeAtRequest{
+		FromVertex: vertexFrom,
+		ToVertex:   vertexTo,
+		Timestamp:  timestamp,
+	}, &resp)
+	if err != nil {
+		c.t.Fatalf("GetEdge failed: %v", err)
+	}
+	return resp.Exists, resp.Properties, resp.Timestamp
+}
+func (c *TestClient) GetEdge(vertexFrom, vertexTo types.VertexId) (bool, types.Properties, types.Timestamp) {
+	return c.GetEdgeAt(vertexFrom, vertexTo, types.Timestamp(time.Now().Unix()))
+}
+
+// FetchAll calls the FetchAll debug command to get all vertices
+func (c *TestClient) FetchAll() map[int][]rpcTypes.VertexInfo {
+	var resp rpcTypes.FetchAllResponse
+	err := c.conn.Call("QueryManager.FetchAll", &rpcTypes.FetchAllRequest{}, &resp)
+	if err != nil {
+		c.t.Fatalf("FetchAll failed: %v", err)
+	}
+	return resp.ShardVertices
 }
 
 // AddEdge adds an edge and returns the timestamp
@@ -77,6 +164,7 @@ func (c *TestClient) AddEdge(fromVertexID, toVertexID types.VertexId, properties
 	if !resp.Success {
 		c.t.Fatalf("AddEdge returned success=false")
 	}
+	c.timestampLog = append(c.timestampLog, resp.Timestamp)
 	return resp.Timestamp
 }
 
@@ -93,6 +181,7 @@ func (c *TestClient) DeleteEdge(fromVertexID, toVertexID types.VertexId) types.T
 	if !resp.Success {
 		c.t.Fatalf("DeleteEdge returned success=false")
 	}
+	c.timestampLog = append(c.timestampLog, resp.Timestamp)
 	return resp.Timestamp
 }
 
@@ -142,6 +231,9 @@ func TestBasicOperations(t *testing.T) {
 
 	client := NewTestClient(t, cfg)
 	defer client.Close()
+	defer func() {
+		client.dumpTimestampedState(t)
+	}()
 
 	// Add vertices
 	v1, ts1 := client.AddVertex(map[string]string{"name": "v1"})
@@ -191,6 +283,9 @@ func TestMVCCSimpleGraph(t *testing.T) {
 
 	client := NewTestClient(t, cfg)
 	defer client.Close()
+	defer func() {
+		client.dumpTimestampedState(t)
+	}()
 
 	// Create initial graph: v1 -> v2
 	v1, ts1 := client.AddVertex(map[string]string{"name": "v1"})
@@ -243,6 +338,9 @@ func TestMVCCEdgeDeletion(t *testing.T) {
 
 	client := NewTestClient(t, cfg)
 	defer client.Close()
+	defer func() {
+		client.dumpTimestampedState(t)
+	}()
 
 	// Create graph: v1 -> v2 -> v3
 	v1, _ := client.AddVertex(map[string]string{"name": "v1"})
@@ -296,6 +394,9 @@ func TestMVCCComplexEvolution(t *testing.T) {
 
 	client := NewTestClient(t, cfg)
 	defer client.Close()
+	defer func() {
+		client.dumpTimestampedState(t)
+	}()
 
 	// Create initial vertices
 	v1, _ := client.AddVertex(map[string]string{"name": "v1"})
@@ -376,6 +477,9 @@ func TestMVCCMultipleEdgeUpdates(t *testing.T) {
 
 	client := NewTestClient(t, cfg)
 	defer client.Close()
+	defer func() {
+		client.dumpTimestampedState(t)
+	}()
 
 	// Create vertices
 	v1, _ := client.AddVertex(map[string]string{"name": "v1"})
@@ -428,6 +532,9 @@ func TestMVCCDeleteAndReadd(t *testing.T) {
 
 	client := NewTestClient(t, cfg)
 	defer client.Close()
+	defer func() {
+		client.dumpTimestampedState(t)
+	}()
 
 	// Create vertices
 	v1, _ := client.AddVertex(map[string]string{"name": "v1"})
