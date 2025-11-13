@@ -210,6 +210,38 @@ func (qm *QueryManager) fetchAllFromShard(shardConfig *config.ShardConfig, req *
 	return resp.Vertices, nil
 }
 
+func (qm *QueryManager) deleteAllFromShard(shardConfig *config.ShardConfig, req *rpcTypes.DeleteAllToShardRequest) error {
+	log.Printf("Deleting all vertices and edges from shard %d", shardConfig.ID)
+
+	// Connect to the shard
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
+	client, err := rpc.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
+	}
+	defer client.Close()
+
+	// Make the RPC call to delete all
+	var resp rpcTypes.DeleteAllToShardResponse
+	err = client.Call("Shard.DeleteAll", req, &resp)
+	if err != nil {
+		return fmt.Errorf("RPC call to shard %d failed: %w", shardConfig.ID, err)
+	}
+
+	if !resp.Success {
+		return fmt.Errorf("shard %d failed to delete all", shardConfig.ID)
+	}
+
+	return nil
+}
+
 // AddVertex is the RPC handler for adding a vertex
 func (qm *QueryManager) AddVertex(req *rpcTypes.AddVertexRequest, resp *rpcTypes.AddVertexResponse) error {
 	log.Printf("Received AddVertex request")
@@ -391,6 +423,30 @@ func (qm *QueryManager) FetchAll(req *rpcTypes.FetchAllRequest, resp *rpcTypes.F
 	}
 
 	log.Printf("Successfully fetched vertices from all %d shards", len(qm.config.Shards))
+	return nil
+}
+
+// DeleteAll is the RPC handler for deleting all vertices and edges from all shards
+func (qm *QueryManager) DeleteAll(req *rpcTypes.DeleteAllRequest, resp *rpcTypes.DeleteAllResponse) error {
+	log.Printf("Received DeleteAll request")
+
+	timestamp := qm.generateTimestamp()
+
+	// Iterate through all shards and delete all vertices and edges from each
+	for _, shardConfig := range qm.config.Shards {
+		err := qm.deleteAllFromShard(&shardConfig, &rpcTypes.DeleteAllToShardRequest{
+			Timestamp: timestamp,
+		})
+		if err != nil {
+			log.Printf("Failed to delete all from shard %d: %v", shardConfig.ID, err)
+			resp.Success = false
+			return fmt.Errorf("failed to delete all from shard %d: %w", shardConfig.ID, err)
+		}
+		log.Printf("Successfully deleted all from shard %d", shardConfig.ID)
+	}
+
+	resp.Success = true
+	log.Printf("Successfully deleted all vertices and edges from all %d shards", len(qm.config.Shards))
 	return nil
 }
 

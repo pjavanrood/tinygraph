@@ -143,3 +143,21 @@ type NotifyLeaderIDUpdateRequest struct {
 }
 
 type NotifyLeaderIDUpdateResponse struct{}
+
+// ------------------------------------------------------------
+
+// DeleteAll request and response
+type DeleteAllRequest struct {
+}
+
+type DeleteAllResponse struct {
+	Success bool // Whether the operation succeeded
+}
+
+type DeleteAllToShardRequest struct {
+	Timestamp types.Timestamp // The timestamp of the operation
+}
+
+type DeleteAllToShardResponse struct {
+	Success bool // Whether the operation succeeded
+}

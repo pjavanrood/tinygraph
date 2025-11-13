@@ -42,7 +42,7 @@ func (s *ShardFSM) addVertex(req rpcTypes.AddVertexToShardRequest, resp *rpcType
 	}
 
 	prop := mvccTypes.VertexProp(req.Properties)
-	
+
 	// we add this new vertex to our map
 	vertex := mvccTypes.NewVertex(req.VertexID, &prop, req.Timestamp)
 
@@ -127,6 +127,15 @@ func (s *ShardFSM) fetchAll(req rpcTypes.FetchAllToShardRequest, resp *rpcTypes.
 		}
 		resp.Vertices = append(resp.Vertices, vertexInfo)
 	}
+	return nil
+}
+
+// deleteAll removes all vertices and edges from the shard
+// This is an internal method called by Shard through Raft consensus
+func (s *ShardFSM) deleteAll(req rpcTypes.DeleteAllToShardRequest, resp *rpcTypes.DeleteAllToShardResponse) error {
+	// Clear all vertices (which also clears all edges since edges are stored in vertices)
+	s.vertices = make(map[VertexId]*mvccTypes.Vertex, 0)
+	resp.Success = true
 	return nil
 }
 

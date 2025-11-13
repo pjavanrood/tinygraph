@@ -100,6 +100,15 @@ func (gc *GraphClient) sendFetchAllRPC() (map[int][]rpcTypes.VertexInfo, error) 
 	return resp.ShardVertices, nil
 }
 
+func (gc *GraphClient) sendDeleteAllRPC() (bool, error) {
+	var resp rpcTypes.DeleteAllResponse
+	err := gc.conn.Call("QueryManager.DeleteAll", &rpcTypes.DeleteAllRequest{}, &resp)
+	if err != nil {
+		return false, err
+	}
+	return resp.Success, nil
+}
+
 func (gc *GraphClient) AddVertex(vertexID string) types.VertexId {
 	properties := types.Properties{
 		"external_id": vertexID,
@@ -305,6 +314,22 @@ func (gc *GraphClient) FetchAll() {
 	}
 }
 
+func (gc *GraphClient) DeleteAll() {
+	success, err := gc.sendDeleteAllRPC()
+	if err != nil {
+		log.Fatalf("Failed to delete all: %v", err)
+	}
+	if !success {
+		log.Fatalf("Delete all operation failed")
+	}
+
+	// Clear local state
+	gc.vertexIDMap = make(map[string]types.VertexId)
+	gc.localGraph = graph.New(graph.StringHash, graph.Directed())
+
+	fmt.Println("Successfully deleted all vertices and edges from the graph")
+}
+
 func runWorkload(workloadPath string, cfg *config.Config) {
 	workload, err := os.ReadFile(workloadPath)
 	if err != nil {
@@ -363,6 +388,10 @@ func runWorkload(workloadPath string, cfg *config.Config) {
 			log.Fatalf("Unknown command: %s", fields[0])
 		}
 	}
+
+	// After processing all commands, delete all vertices and edges
+	log.Println("Workload completed. Deleting all vertices and edges...")
+	client.DeleteAll()
 }
 
 func main() {

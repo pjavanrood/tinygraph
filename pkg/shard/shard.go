@@ -27,6 +27,7 @@ const (
 	AddVertex ShardOp = iota
 	AddEdge
 	DeleteEdge
+	DeleteAll
 )
 
 // Shard wraps a ShardFSM with Raft consensus functionality
@@ -101,6 +102,18 @@ func (s *Shard) Apply(logEntry *raft.Log) interface{} {
 		}
 		var resp rpcTypes.DeleteEdgeToShardResponse
 		err = s.shardFSM.deleteEdge(req, &resp)
+		if err != nil {
+			return ShardApplyResponse{Response: nil, Error: err}
+		}
+		return ShardApplyResponse{Response: resp, Error: nil}
+	case DeleteAll:
+		var req rpcTypes.DeleteAllToShardRequest
+		err = gob.NewDecoder(bytes.NewReader(logOp.Req)).Decode(&req)
+		if err != nil {
+			return ShardApplyResponse{Response: nil, Error: err}
+		}
+		var resp rpcTypes.DeleteAllToShardResponse
+		err = s.shardFSM.deleteAll(req, &resp)
 		if err != nil {
 			return ShardApplyResponse{Response: nil, Error: err}
 		}
@@ -305,6 +318,42 @@ func (s *Shard) FetchAll(req rpcTypes.FetchAllToShardRequest, resp *rpcTypes.Fet
 	defer s.mu.Unlock()
 
 	return s.shardFSM.fetchAll(req, resp)
+}
+
+// DeleteAll is the RPC handler for deleting all vertices and edges through Raft consensus
+func (s *Shard) DeleteAll(req rpcTypes.DeleteAllToShardRequest, resp *rpcTypes.DeleteAllToShardResponse) error {
+	if s.raft.State() != raft.Leader {
+		return fmt.Errorf("not leader")
+	}
+
+	// Encode the request
+	var reqBuf bytes.Buffer
+	if err := gob.NewEncoder(&reqBuf).Encode(req); err != nil {
+		return err
+	}
+
+	// Create the log operation
+	logOp := ShardLogOp{
+		Op:  DeleteAll,
+		Req: reqBuf.Bytes(),
+	}
+
+	// Encode the log operation
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(logOp); err != nil {
+		return err
+	}
+
+	f := s.raft.Apply(buf.Bytes(), time.Second*TIMEOUT_SECONDS)
+	if f.Error() != nil {
+		return f.Error()
+	}
+	shardApplyResponse := f.Response().(ShardApplyResponse)
+	if shardApplyResponse.Error != nil {
+		return shardApplyResponse.Error
+	}
+	*resp = shardApplyResponse.Response.(rpcTypes.DeleteAllToShardResponse)
+	return nil
 }
 
 func (s *Shard) GetLeaderID(req rpcTypes.RaftLeadershipRequest, resp *rpcTypes.RaftLeadershipResponse) error {
