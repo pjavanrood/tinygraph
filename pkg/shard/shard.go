@@ -33,9 +33,10 @@ const (
 // Shard wraps a ShardFSM with Raft consensus functionality
 // It implements the raft.FSM interface and handles all RPC calls
 type Shard struct {
-	raft     *raft.Raft
-	shardFSM *ShardFSM
-	mu       sync.Mutex
+	raft          *raft.Raft
+	shardFSM      *ShardFSM
+	mu            sync.Mutex
+	connSemaphore chan struct{} // Limits concurrent connections
 }
 
 // ShardLogOp represents an operation to be logged and replicated via Raft
@@ -410,8 +411,13 @@ func NewShard(cfg *config.Config, shardID int, replicaID int) (*Shard, error) {
 	// Create the underlying FSM
 	shardFSM := newShardFSM(cfg, shardID)
 
+	// Create a semaphore to limit concurrent connections (max 50)
+	maxConcurrentConns := 50
+	connSemaphore := make(chan struct{}, maxConcurrentConns)
+
 	s := &Shard{
-		shardFSM: shardFSM,
+		shardFSM:      shardFSM,
+		connSemaphore: connSemaphore,
 	}
 
 	// Setup Raft configuration
@@ -499,6 +505,16 @@ func (s *Shard) Start(rpcAddress string) error {
 			log.Printf("Failed to accept connection: %v\n", err)
 			continue
 		}
-		go serv.ServeConn(conn)
+
+		// Acquire semaphore before spawning goroutine
+		s.connSemaphore <- struct{}{}
+
+		go func(c net.Conn) {
+			defer func() {
+				// Release semaphore when done
+				<-s.connSemaphore
+			}()
+			serv.ServeConn(c)
+		}(conn)
 	}
 }

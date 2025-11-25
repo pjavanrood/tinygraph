@@ -21,6 +21,7 @@ var log = util.New("QueryManager", util.LogLevelInfo)
 type QueryManager struct {
 	config         *config.Config
 	replicaManager ReplicaManager
+	connSemaphore  chan struct{} // Limits concurrent connections
 }
 
 // NewQueryManager creates a new query manager instance
@@ -28,9 +29,14 @@ func NewQueryManager(cfg *config.Config) *QueryManager {
 	// Update log level from config
 	log.SetLevel(cfg.GetLogLevel())
 
+	// Create a semaphore to limit concurrent connections (max 50)
+	maxConcurrentConns := 50
+	connSemaphore := make(chan struct{}, maxConcurrentConns)
+
 	return &QueryManager{
 		config:         cfg,
 		replicaManager: NewPushBasedReplicaManager(cfg),
+		connSemaphore:  connSemaphore,
 	}
 }
 
@@ -603,6 +609,16 @@ func (qm *QueryManager) Start() error {
 			log.Printf("Failed to accept connection: %v", err)
 			continue
 		}
-		go server.ServeConn(conn)
+
+		// Acquire semaphore before spawning goroutine
+		qm.connSemaphore <- struct{}{}
+
+		go func(c net.Conn) {
+			defer func() {
+				// Release semaphore when done
+				<-qm.connSemaphore
+			}()
+			server.ServeConn(c)
+		}(conn)
 	}
 }
