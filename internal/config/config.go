@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pjavanrood/tinygraph/internal/util"
 	"gopkg.in/yaml.v3"
 )
 
@@ -13,6 +14,7 @@ type Config struct {
 	Shards       []ShardConfig      `yaml:"shards"`
 	Partitioning PartitioningConfig `yaml:"partitioning"`
 	Replication  ReplicationConfig  `yaml:"replication"`
+	Logging      LoggingConfig      `yaml:"logging"`
 }
 
 // QueryManagerConfig holds Query Manager specific settings
@@ -47,6 +49,11 @@ type PartitioningConfig struct {
 type ReplicationConfig struct {
 	Strategy          string `yaml:"strategy"`           // e.g., "none", "master_slave", "multi_master"
 	ReplicationFactor int    `yaml:"replication_factor"` // Number of replicas per shard
+}
+
+// LoggingConfig defines the logging configuration
+type LoggingConfig struct {
+	Level string `yaml:"level"` // Options: "OFF", "FATAL", "ERROR", "WARN", "INFO", "DEBUG"
 }
 
 // LoadConfig loads configuration from a YAML file
@@ -173,6 +180,22 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	// Validate Logging
+	validLogLevels := map[string]bool{
+		"OFF":     true,
+		"FATAL":   true,
+		"ERROR":   true,
+		"WARN":    true,
+		"WARNING": true,
+		"INFO":    true,
+		"DEBUG":   true,
+	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = "INFO" // Default to INFO if not specified
+	} else if !validLogLevels[c.Logging.Level] {
+		return fmt.Errorf("invalid logging level: %s (valid options: OFF, FATAL, ERROR, WARN, INFO, DEBUG)", c.Logging.Level)
+	}
+
 	return nil
 }
 
@@ -200,7 +223,7 @@ func (s *ShardConfig) GetReplicaByID(replicaID int) (*ReplicaConfig, error) {
 // For now, this returns the first replica's address
 func (s *ShardConfig) GetReplicaAddress(replicaID int) (string, error) {
 	if len(s.Replicas) == 0 {
-		return "", fmt.Errorf("no replicas found in shard %d", s.ID)	
+		return "", fmt.Errorf("no replicas found in shard %d", s.ID)
 	}
 	for _, replica := range s.Replicas {
 		if replica.ID == replicaID {
@@ -218,4 +241,12 @@ func (r *ReplicaConfig) GetRPCAddress() string {
 // GetRaftAddress returns the full Raft address (host:port) for a replica
 func (r *ReplicaConfig) GetRaftAddress() string {
 	return fmt.Sprintf("%s:%d", r.RaftHost, r.RaftPort)
+}
+
+// GetLogLevel returns the configured log level, defaulting to INFO if not set
+func (c *Config) GetLogLevel() util.LogLevel {
+	if c.Logging.Level == "" {
+		return util.LogLevelInfo
+	}
+	return util.ParseLogLevel(c.Logging.Level)
 }

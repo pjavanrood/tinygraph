@@ -15,7 +15,7 @@ import (
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
-var log = util.New("QueryManager")
+var log = util.New("QueryManager", util.LogLevelInfo)
 
 // QueryManager handles client queries and coordinates shards
 type QueryManager struct {
@@ -25,6 +25,9 @@ type QueryManager struct {
 
 // NewQueryManager creates a new query manager instance
 func NewQueryManager(cfg *config.Config) *QueryManager {
+	// Update log level from config
+	log.SetLevel(cfg.GetLogLevel())
+
 	return &QueryManager{
 		config:         cfg,
 		replicaManager: NewPushBasedReplicaManager(cfg),

@@ -3,12 +3,12 @@ package main
 import (
 	"flag"
 
-	"github.com/pjavanrood/tinygraph/internal/util"
 	"github.com/pjavanrood/tinygraph/internal/config"
+	"github.com/pjavanrood/tinygraph/internal/util"
 	"github.com/pjavanrood/tinygraph/pkg/shard"
 )
 
-var log = util.New("Shard")
+var log = util.New("Shard", util.LogLevelInfo)
 
 func main() {
 	// Parse command-line flags
@@ -17,13 +17,16 @@ func main() {
 	replicaID := flag.Int("replica-id", -1, "The Replica ID within the shard")
 	flag.Parse()
 
-	log.Println("Starting Shard Replica...")
-
 	// Load configuration
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
+
+	// Update log level from config
+	log.SetLevel(cfg.GetLogLevel())
+
+	log.Println("Starting Shard Replica...")
 
 	log.Printf("Loaded configuration with %d shards", len(cfg.Shards))
 	log.Printf("Partitioning: %s, Replication: %s", cfg.Partitioning.Algorithm, cfg.Replication.Strategy)

@@ -16,7 +16,7 @@ import (
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
-var log = util.New("Client")
+var log = util.New("Client", util.LogLevelInfo)
 
 type GraphClient struct {
 	cfg         *config.Config
@@ -400,13 +400,16 @@ func main() {
 	workloadPath := flag.String("workload", "workloads/simple_graph.txt", "Path to workload file")
 	flag.Parse()
 
-	log.Println("Starting Client...")
-
 	// Load configuration
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
+
+	// Update log level from config
+	log.SetLevel(cfg.GetLogLevel())
+
+	log.Println("Starting Client...")
 
 	runWorkload(*workloadPath, cfg)
 }

@@ -18,7 +18,7 @@ import (
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
-var log = util.New("Shard")
+var log = util.New("Shard", util.LogLevelInfo)
 
 // ShardOp represents the type of operation to be applied through Raft
 type ShardOp int
@@ -392,6 +392,9 @@ func (s *Shard) GetLeaderID(req rpcTypes.RaftLeadershipRequest, resp *rpcTypes.R
 
 // NewShard creates a new Shard with Raft consensus
 func NewShard(cfg *config.Config, shardID int, replicaID int) (*Shard, error) {
+	// Update log level from config
+	log.SetLevel(cfg.GetLogLevel())
+
 	// Get shard configuration
 	shardConfig, err := cfg.GetShardByID(shardID)
 	if err != nil {

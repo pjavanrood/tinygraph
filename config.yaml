@@ -47,3 +47,7 @@ replication:
   strategy: "raft"  # Options: "none", "raft"
   replication_factor: 3  # Number of replicas per shard
 
+# Logging configuration
+logging:
+  level: "INFO"  # Options: "OFF", "FATAL", "ERROR", "WARN", "INFO", "DEBUG"
+
