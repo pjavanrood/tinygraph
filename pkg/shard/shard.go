@@ -292,6 +292,34 @@ func (s *Shard) DeleteEdge(req rpcTypes.DeleteEdgeToShardRequest, resp *rpcTypes
 	return nil
 }
 
+// GetVertexAt is the RPC handler for getting a vertex with linearizable read semantics
+func (s *Shard) GetVertexAt(req rpcTypes.GetVertexAtShardRequest, resp *rpcTypes.GetVertexAtShardResponse) error {
+	// Use VerifyLeader to ensure we have up-to-date state and are still the leader
+	// This provides linearizable read semantics without going through the Raft log
+	if err := s.raft.VerifyLeader().Error(); err != nil {
+		return fmt.Errorf("not leader or unable to verify leadership: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.shardFSM.getVertexAt(req, resp)
+}
+
+// GetEdgeAt is the RPC handler for getting a vertex with linearizable read semantics
+func (s *Shard) GetEdgeAt(req rpcTypes.GetEdgeAtShardRequest, resp *rpcTypes.GetEdgeAtShardResponse) error {
+	// Use VerifyLeader to ensure we have up-to-date state and are still the leader
+	// This provides linearizable read semantics without going through the Raft log
+	if err := s.raft.VerifyLeader().Error(); err != nil {
+		return fmt.Errorf("not leader or unable to verify leadership: %w", err)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.shardFSM.getEdgeAt(req, resp)
+}
+
 // GetNeighbors is the RPC handler for getting vertex neighbors with linearizable read semantics
 func (s *Shard) GetNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *rpcTypes.GetNeighborsToShardResponse) error {
 	// Use VerifyLeader to ensure we have up-to-date state and are still the leader
