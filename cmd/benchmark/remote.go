@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/rpc"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -194,39 +193,7 @@ func (pbc *ParallelBenchmarkClient) Run(workload []string) BenchmarkResults {
 	startTime := time.Now()
 
 	// Parse workload into operations
-	type Op struct {
-		From   string
-		To     string
-		Weight int
-	}
-	operations := make([]Op, 0)
-
-	for _, line := range workload {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Split(line, " ")
-		if len(fields) < 2 || fields[0] == "#" {
-			continue // Skip comments
-		}
-
-		weight := 0
-		if len(fields) == 3 {
-			var err error
-			weight, err = strconv.Atoi(fields[2])
-			if err != nil {
-				log.Printf("Warning: Invalid weight in line: %s", line)
-				weight = 0
-			}
-		}
-		operations = append(operations, Op{
-			From:   fields[0],
-			To:     fields[1],
-			Weight: weight,
-		})
-	}
-
+	operations := parseWorkload(workload)
 	totalOps := len(operations)
 	log.Printf("Total operations to process: %d", totalOps)
 
@@ -238,7 +205,7 @@ func (pbc *ParallelBenchmarkClient) Run(workload []string) BenchmarkResults {
 	log.Printf("Checkpoint positions: %v", checkpointPositions)
 
 	// Channel for operations
-	opChan := make(chan Op, pbc.numGoroutines*10)
+	opChan := make(chan Operation, pbc.numGoroutines*10)
 	var wg sync.WaitGroup
 	var opsCompleted int64
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +47,46 @@ type BenchmarkResults struct {
 		TotalDuration    time.Duration `json:"total_duration_ns"`
 		TotalDurationMs  float64       `json:"total_duration_ms"`
 	} `json:"summary"`
+}
+
+// Operation represents a single graph operation from the workload
+type Operation struct {
+	From   string
+	To     string
+	Weight int
+}
+
+// parseWorkload parses the workload file content into a slice of operations
+func parseWorkload(workload []string) []Operation {
+	operations := make([]Operation, 0)
+
+	for _, line := range workload {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 || fields[0] == "#" {
+			continue // Skip comments
+		}
+
+		weight := 0
+		if len(fields) == 3 {
+			var err error
+			weight, err = strconv.Atoi(fields[2])
+			if err != nil {
+				log.Printf("Warning: Invalid weight in line: %s", line)
+				weight = 0
+			}
+		}
+		operations = append(operations, Operation{
+			From:   fields[0],
+			To:     fields[1],
+			Weight: weight,
+		})
+	}
+
+	return operations
 }
 
 func main() {
@@ -145,17 +186,8 @@ func main() {
 
 	if runLocal {
 		// Calculate checkpoint positions for local graph (same as parallel)
-		totalOps := 0
-		for _, line := range workload {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			fields := strings.Split(line, " ")
-			if len(fields) >= 1 && fields[0] != "#" {
-				totalOps++
-			}
-		}
+		operations := parseWorkload(workload)
+		totalOps := len(operations)
 
 		checkpointPositions := make([]int, *numCheckpoints)
 		for i := 0; i < *numCheckpoints; i++ {

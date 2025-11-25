@@ -1,0 +1,2 @@
+go run cmd/benchmark/*.go -config config.yaml -workload ./cmd/benchmark/comment-graph-sample-no-duplicate.txt -goroutines 1 -checkpoints 50 -bfs-radius 10 -rate-limit 1000 -mode local > logs/benchmark.log 2>&1
+start-cluster 3_shard_3_replica_config.yaml > logs/cluster.log 2>&1

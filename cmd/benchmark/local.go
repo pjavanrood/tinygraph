@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"sort"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -86,39 +84,7 @@ func (lgb *LocalGraphBenchmark) Run(workload []string, checkpointPositions []int
 	startTime := time.Now()
 
 	// Parse workload
-	type Op struct {
-		From   string
-		To     string
-		Weight int
-	}
-	operations := make([]Op, 0)
-
-	for _, line := range workload {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Split(line, " ")
-		if len(fields) < 2 || fields[0] == "#" {
-			continue // Skip comments
-		}
-
-		weight := 0
-		if len(fields) == 3 {
-			var err error
-			weight, err = strconv.Atoi(fields[2])
-			if err != nil {
-				log.Printf("Warning: Invalid weight in line: %s", line)
-				weight = 0
-			}
-		}
-		operations = append(operations, Op{
-			From:   fields[1],
-			To:     fields[2],
-			Weight: weight,
-		})
-	}
-
+	operations := parseWorkload(workload)
 	totalOps := len(operations)
 	currentOp := 0
 	checkpointIdx := 0
@@ -238,25 +204,14 @@ func (lgb *LocalGraphBenchmark) Run(workload []string, checkpointPositions []int
 func buildLocalGraphFromWorkload(workload []string) (graph.Graph[string, string], error) {
 	g := graph.New(graph.StringHash, graph.Directed())
 
-	for _, line := range workload {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		fields := strings.Split(line, " ")
-		if len(fields) < 2 || fields[0] == "#" {
-			continue // Skip comments
-		}
-
-		from := fields[0]
-		to := fields[1]
-
+	operations := parseWorkload(workload)
+	for _, op := range operations {
 		// Add vertices if they don't exist
-		_ = g.AddVertex(from)
-		_ = g.AddVertex(to)
+		_ = g.AddVertex(op.From)
+		_ = g.AddVertex(op.To)
 
 		// Add edge
-		_ = g.AddEdge(from, to)
+		_ = g.AddEdge(op.From, op.To)
 	}
 
 	return g, nil
