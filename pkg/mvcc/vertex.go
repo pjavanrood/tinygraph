@@ -13,6 +13,7 @@ type VertexProp types.Properties
 
 // Vertex represents a graph vertex that maintains outgoing edges.
 type Vertex struct {
+	mu    sync.Mutex               // ADD: Mutex added to protect write-path modifications
 	ID    types.VertexId           // Vertex ID
 	Edges map[types.VertexId]*Edge // Outgoing edges keyed by "from->to"
 	TS    types.Timestamp          // Timestamp of latest modification
@@ -32,6 +33,9 @@ func NewVertex(id types.VertexId, prop *VertexProp, ts types.Timestamp) *Vertex 
 }
 
 func (v *Vertex) UpdateVertex(ts types.Timestamp, prop *VertexProp) *Vertex {
+	v.mu.Lock()                  // ADD: Acquire write lock
+    defer v.mu.Unlock()          // ADD: Release write lock
+	
 	temp := v.Prev
 	v.Prev = nil
 	out := &Vertex{
@@ -49,11 +53,14 @@ func (v *Vertex) UpdateVertex(ts types.Timestamp, prop *VertexProp) *Vertex {
 		out.Prev = slices.Insert(temp, 0, v)
 	}
 
-	return v
+	return out
 }
 
 // AddEdge creates or updates an outgoing edge.
 func (v *Vertex) AddEdge(to types.VertexId, ts types.Timestamp) error {
+	v.mu.Lock()                  // ADD: Acquire write lock
+    defer v.mu.Unlock()          // ADD: Release write lock
+	
 	if cur, ok := v.Edges[to]; ok {
 		v.Edges[to] = cur.UpdateEdge(ts, cur.Prop)
 	} else {
@@ -64,6 +71,9 @@ func (v *Vertex) AddEdge(to types.VertexId, ts types.Timestamp) error {
 
 // DeleteEdge logically deletes an outgoing edge by creating a deleted version.
 func (v *Vertex) DeleteEdge(to types.VertexId, ts types.Timestamp) {
+	v.mu.Lock()                  // ADD: Acquire write lock
+    defer v.mu.Unlock()          // ADD: Release write lock
+	
 	if cur, ok := v.Edges[to]; ok && cur.AliveAt(ts) {
 		v.Edges[to] = cur.MarkDeleted(ts)
 	}
