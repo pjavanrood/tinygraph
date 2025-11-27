@@ -2,6 +2,7 @@ package mvcc
 
 import (
 	"slices"
+	"sync"
 
 	"github.com/pjavanrood/tinygraph/internal/types"
 )
@@ -35,7 +36,7 @@ func NewVertex(id types.VertexId, prop *VertexProp, ts types.Timestamp) *Vertex 
 func (v *Vertex) UpdateVertex(ts types.Timestamp, prop *VertexProp) *Vertex {
 	v.mu.Lock()                  // ADD: Acquire write lock
     defer v.mu.Unlock()          // ADD: Release write lock
-	
+
 	temp := v.Prev
 	v.Prev = nil
 	out := &Vertex{
@@ -60,7 +61,7 @@ func (v *Vertex) UpdateVertex(ts types.Timestamp, prop *VertexProp) *Vertex {
 func (v *Vertex) AddEdge(to types.VertexId, ts types.Timestamp) error {
 	v.mu.Lock()                  // ADD: Acquire write lock
     defer v.mu.Unlock()          // ADD: Release write lock
-	
+
 	if cur, ok := v.Edges[to]; ok {
 		v.Edges[to] = cur.UpdateEdge(ts, cur.Prop)
 	} else {
@@ -73,7 +74,7 @@ func (v *Vertex) AddEdge(to types.VertexId, ts types.Timestamp) error {
 func (v *Vertex) DeleteEdge(to types.VertexId, ts types.Timestamp) {
 	v.mu.Lock()                  // ADD: Acquire write lock
     defer v.mu.Unlock()          // ADD: Release write lock
-	
+
 	if cur, ok := v.Edges[to]; ok && cur.AliveAt(ts) {
 		v.Edges[to] = cur.MarkDeleted(ts)
 	}
