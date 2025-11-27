@@ -7,6 +7,7 @@ import (
 	"net/rpc"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
@@ -17,11 +18,21 @@ import (
 
 var log = util.New("QueryManager", util.LogLevelInfo)
 
+type BfsManager struct {
+	Id                 types.BFSId
+	Vertices           []types.VertexId // we expect each shard to return a vertex id only once
+	DispatchedRequests map[int]int
+	Done               chan interface{}
+}
+
 // QueryManager handles client queries and coordinates shards
 type QueryManager struct {
 	config         *config.Config
 	replicaManager ReplicaManager
-	connSemaphore  chan struct{} // Limits concurrent connections
+	connSemaphore  chan struct{}               // Limits concurrent connections
+	managers       map[types.BFSId]*BfsManager // maps BFSIds to a manager
+	idGenerator    uint
+	bfsMx          sync.Mutex
 }
 
 // NewQueryManager creates a new query manager instance
@@ -37,6 +48,8 @@ func NewQueryManager(cfg *config.Config) *QueryManager {
 		config:         cfg,
 		replicaManager: NewPushBasedReplicaManager(cfg),
 		connSemaphore:  connSemaphore,
+		managers:       make(map[types.BFSId]*BfsManager),
+		idGenerator:    0,
 	}
 }
 
@@ -363,6 +376,19 @@ func (qm *QueryManager) GetVertex(req *rpcTypes.GetVertexRequest, resp *rpcTypes
 	}, resp)
 }
 
+// GetLeaderId
+func (qm *QueryManager) GetLeaderId(req *rpcTypes.GetLeaderIdRequest, resp *rpcTypes.GetLeaderIdResponse) error {
+	log.Printf("Got LeaderID Request")
+	leader, err := qm.replicaManager.GetLeaderID(req.ShardId)
+	if err != nil {
+		log.Printf("Failed to fetch leader for shard %d", req.ShardId)
+		return err
+	}
+	resp.LeaderId = leader
+
+	return nil
+}
+
 // AddEdge is the RPC handler for adding an edge
 func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.AddEdgeResponse) error {
 	log.Printf("Received AddEdge request")
@@ -466,6 +492,102 @@ func (qm *QueryManager) DeleteEdge(req *rpcTypes.DeleteEdgeRequest, resp *rpcTyp
 
 	resp.Success = true
 	resp.Timestamp = timestamp
+	return nil
+}
+
+func (qm *QueryManager) BFSResponse(req *rpcTypes.BFSFromShardRequest, resp *rpcTypes.BFSFromShardResponse) error {
+	qm.bfsMx.Lock()
+	defer qm.bfsMx.Unlock()
+
+	// lookup the manager (if it doesn't exist, ignore it)
+	if _, exists := qm.managers[req.Id]; !exists {
+		return nil
+	}
+
+	qm.managers[req.Id].DispatchedRequests[int(req.Shard)]--
+	for shard, reqs := range req.DispatchedRequests {
+		qm.managers[req.Id].DispatchedRequests[shard] += reqs
+	}
+	for _, vertexId := range req.Vertices {
+		qm.managers[req.Id].Vertices = append(qm.managers[req.Id].Vertices, vertexId)
+	}
+
+	sum := 0
+	for _, reqs := range qm.managers[req.Id].DispatchedRequests {
+		sum += reqs
+	}
+
+	if sum == 0 {
+		qm.managers[req.Id].Done <- nil
+	}
+
+	return nil
+}
+
+func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSResponse) error {
+	log.Printf("Received ShardedBFS request")
+
+	shardID, err := qm.getShardIDFromVertexID(req.StartVertexID)
+	if err != nil {
+		log.Printf("Failed to get shard ID from edge ID: %v", err)
+		return err
+	}
+
+	shardConfig, err := qm.config.GetShardByID(shardID)
+	if err != nil {
+		log.Printf("Failed to get shard by ID: %v", err)
+		return err
+	}
+
+	// Connect to the shard
+	leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+	if err != nil {
+		return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+	}
+	addr, err := shardConfig.GetReplicaAddress(leaderID)
+	if err != nil {
+		return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+	}
+	client, err := rpc.Dial("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
+	}
+	defer client.Close()
+
+	// create a new manager, dispatch it, and wait for results
+	qm.bfsMx.Lock()
+	newId := types.BFSId(qm.idGenerator)
+	qm.idGenerator++
+	qm.bfsMx.Unlock()
+
+	qm.managers[newId] = &BfsManager{
+		Id:                 newId,
+		Vertices:           make([]types.VertexId, 0),
+		DispatchedRequests: make(map[int]int),
+		Done:               make(chan interface{}),
+	}
+	// our first request
+	qm.managers[newId].DispatchedRequests[shardID] = 1
+
+	bfsReq := &rpcTypes.BFSToShardRequest{
+		Root:         req.StartVertexID,
+		N:            req.Radius,
+		Timestamp:    req.Timestamp,
+		Id:           newId,
+		CallbackAddr: net.JoinHostPort(qm.config.QueryManager.Host, strconv.Itoa(qm.config.QueryManager.Port)),
+	}
+	var bfsResp rpcTypes.BFSToShardResponse
+
+	err = client.Call("Shard.BFS", bfsReq, &bfsResp)
+	if err != nil {
+		return fmt.Errorf("RPC call failed: %w", err)
+	}
+
+	// wait for all to finish before responding
+	<-qm.managers[newId].Done
+
+	resp.Vertices = qm.managers[newId].Vertices
+
 	return nil
 }
 

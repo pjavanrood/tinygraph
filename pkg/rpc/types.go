@@ -223,3 +223,50 @@ type DeleteAllToShardRequest struct {
 type DeleteAllToShardResponse struct {
 	Success bool // Whether the operation succeeded
 }
+
+// ------------------------------------------------------------
+
+// Perform BFS on given vertex V for N steps
+type ShardedBFSRequest struct {
+	Root      types.VertexId
+	N         int
+	Timestamp types.Timestamp
+}
+
+type ShardedBFSResponse struct {
+	Vertices []types.VertexId
+	Success  bool // Whether the operation succeeded
+}
+
+type BFSToShardRequest struct {
+	Root         types.VertexId
+	N            int
+	Timestamp    types.Timestamp // The timestamp of the operation
+	Id           types.BFSId
+	CallbackAddr string
+}
+
+type BFSToShardResponse struct {
+	Success bool // Whether the operation has been dispatched
+}
+
+// sends the BFS visited information to the QM
+type BFSFromShardRequest struct {
+	Id                 types.BFSId      // the request ID
+	Shard              types.ShardId    // the shard id
+	Vertices           []types.VertexId // can be empty
+	DispatchedRequests map[int]int      // this is the additional requests dispatched by this shard
+}
+
+type BFSFromShardResponse struct {
+}
+
+// ------------------------------------------------------------
+
+type GetLeaderIdRequest struct {
+	ShardId int
+}
+
+type GetLeaderIdResponse struct {
+	LeaderId int
+}

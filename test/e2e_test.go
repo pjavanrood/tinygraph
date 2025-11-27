@@ -186,9 +186,23 @@ func (c *TestClient) DeleteEdge(fromVertexID, toVertexID types.VertexId) types.T
 }
 
 // BFS performs a BFS query at a given timestamp
+/*
 func (c *TestClient) BFS(startVertexID types.VertexId, radius int, timestamp types.Timestamp) []types.VertexId {
 	var resp rpcTypes.BFSResponse
 	err := c.conn.Call("QueryManager.BFS", &rpcTypes.BFSRequest{
+		StartVertexID: startVertexID,
+		Radius:        radius,
+		Timestamp:     timestamp,
+	}, &resp)
+	if err != nil {
+		c.t.Fatalf("BFS failed: %v", err)
+	}
+	return resp.Vertices
+}
+*/
+func (c *TestClient) BFS(startVertexID types.VertexId, radius int, timestamp types.Timestamp) []types.VertexId {
+	var resp rpcTypes.BFSResponse
+	err := c.conn.Call("QueryManager.ShardedBFS", &rpcTypes.BFSRequest{
 		StartVertexID: startVertexID,
 		Radius:        radius,
 		Timestamp:     timestamp,
