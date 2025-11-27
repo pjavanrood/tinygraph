@@ -19,8 +19,9 @@ type Config struct {
 
 // QueryManagerConfig holds Query Manager specific settings
 type QueryManagerConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
+	Host    string `yaml:"host"`
+	Port    int    `yaml:"port"`
+	BFSType string `yaml:"bfs_type"` // Options: "naive", "optimized"
 }
 
 // ShardConfig represents a single shard's configuration
@@ -83,6 +84,16 @@ func (c *Config) Validate() error {
 	// Validate Query Manager
 	if c.QueryManager.Port <= 0 || c.QueryManager.Port > 65535 {
 		return fmt.Errorf("invalid query manager port: %d", c.QueryManager.Port)
+	}
+	if c.QueryManager.BFSType == "" {
+		c.QueryManager.BFSType = "naive" // Default to naive if not specified
+	}
+	validBFSTypes := map[string]bool{
+		"naive":     true,
+		"optimized": true,
+	}
+	if !validBFSTypes[c.QueryManager.BFSType] {
+		return fmt.Errorf("invalid BFS type: %s (valid options: naive, optimized)", c.QueryManager.BFSType)
 	}
 
 	// Validate Shards

@@ -259,16 +259,16 @@ func (gc *GraphClient) BFS(startVertexID string, radius int) {
 		fmt.Println("✓ BFS verification PASSED: Results match local graph")
 	} else {
 		fmt.Println("✗ BFS verification FAILED: Results do not match local graph")
-		fmt.Printf("  Expected (local): %v\n", localBFSResult)
-		fmt.Printf("  Got (remote):     %v\n", verticesExternalIDs)
+		// fmt.Printf("  Expected (local): %v\n", localBFSResult)
+		// fmt.Printf("  Got (remote):     %v\n", verticesExternalIDs)
 	}
 }
 
 // verifyBFSResults compares two BFS results (order-independent)
 func (gc *GraphClient) verifyBFSResults(remoteResult, localResult []string) bool {
-	if len(remoteResult) != len(localResult) {
-		return false
-	}
+	// if len(remoteResult) != len(localResult) {
+	// 	return false
+	// }
 
 	// Convert to sets for comparison
 	remoteSet := make(map[string]bool)
@@ -282,17 +282,25 @@ func (gc *GraphClient) verifyBFSResults(remoteResult, localResult []string) bool
 	}
 
 	// Check if sets are equal
-	if len(remoteSet) != len(localSet) {
-		return false
-	}
-
+	inRemoteNotInLocal := make(map[string]bool)
+	inLocalNotInRemote := make(map[string]bool)
 	for v := range remoteSet {
 		if !localSet[v] {
-			return false
+			inRemoteNotInLocal[v] = true
+		}
+	}
+	for v := range localSet {
+		if !remoteSet[v] {
+			inLocalNotInRemote[v] = true
 		}
 	}
 
-	return true
+	if len(inRemoteNotInLocal) > 0 || len(inLocalNotInRemote) > 0 {
+		log.Printf("Vertices in remote but not in local: %v\n", inRemoteNotInLocal)
+		log.Printf("Vertices in local but not in remote: %v\n", inLocalNotInRemote)
+	}
+
+	return len(inRemoteNotInLocal) == 0 && len(inLocalNotInRemote) == 0
 }
 
 func (gc *GraphClient) FetchAll() {
@@ -343,7 +351,7 @@ func runWorkload(workloadPath string, cfg *config.Config) {
 		if line == "" {
 			continue
 		}
-		fields := strings.Split(line, " ")
+		fields := strings.Fields(line)
 		if len(fields) < 1 {
 			log.Fatalf("Invalid workload line: %s", line)
 		}

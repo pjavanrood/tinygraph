@@ -173,6 +173,47 @@ func (s *ShardFSM) getNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *r
 	return nil
 }
 
+// getNeighborsForBFS retrieves all neighbors of a vertex at a given timestamp for BFS
+// Returns empty slice if vertex doesn't exist (doesn't error)
+func (s *ShardFSM) getNeighborsForBFS(vertexID internalTypes.VertexId, timestamp internalTypes.Timestamp) ([]internalTypes.VertexId, error) {
+	vertex, ok := s.vertices[VertexId(vertexID)]
+	if !ok {
+		return []internalTypes.VertexId{}, nil // Return empty, don't error
+	}
+
+	neighbors := vertex.GetAllEdges(timestamp)
+	result := make([]internalTypes.VertexId, len(neighbors))
+	for i, edge := range neighbors {
+		result[i] = edge.ToID
+	}
+
+	return result, nil
+}
+
+// batchGetNeighbors retrieves neighbors for multiple vertices at a given timestamp
+// This is an internal method called by Shard
+func (s *ShardFSM) batchGetNeighbors(req rpcTypes.BatchGetNeighborsToShardRequest, resp *rpcTypes.BatchGetNeighborsToShardResponse) error {
+	resp.Results = make(map[internalTypes.VertexId][]internalTypes.VertexId)
+
+	for _, vertexID := range req.VertexIDs {
+		vertex, ok := s.vertices[VertexId(vertexID)]
+		if !ok {
+			// Skip missing vertices, return empty neighbors
+			resp.Results[vertexID] = []internalTypes.VertexId{}
+			continue
+		}
+
+		neighbors := vertex.GetAllEdges(req.Timestamp)
+		neighborIDs := make([]internalTypes.VertexId, len(neighbors))
+		for i, edge := range neighbors {
+			neighborIDs[i] = edge.ToID
+		}
+		resp.Results[vertexID] = neighborIDs
+	}
+
+	return nil
+}
+
 // fetchAll retrieves all vertex IDs and properties in the shard
 // This is an internal method called by Shard
 func (s *ShardFSM) fetchAll(req rpcTypes.FetchAllToShardRequest, resp *rpcTypes.FetchAllToShardResponse) error {

@@ -2,6 +2,8 @@ package mvcc
 
 import (
 	"slices"
+	"sync"
+
 	"github.com/pjavanrood/tinygraph/internal/types"
 )
 
@@ -37,7 +39,7 @@ func NewEdge(from, to types.VertexId, ts types.Timestamp) *Edge {
 func (e *Edge) UpdateEdge(ts types.Timestamp, prop *EdgeProp) *Edge {
 	e.mu.Lock()                 // ADD: Acquire write lock
     defer e.mu.Unlock()         // ADD: Release write lock
-	
+
 	temp := e.Prev
 	e.Prev = nil
 	out := &Edge{
