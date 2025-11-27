@@ -513,8 +513,7 @@ func (qm *QueryManager) BFSResponse(req *rpcTypes.BFSFromShardRequest, resp *rpc
 	}
 
 	allZero := true
-	for id, reqs := range qm.managers[req.Id].DispatchedRequests {
-		log.Printf("CHECKING SHARD %d: WAITING ON %d OPS", id, reqs)
+	for _, reqs := range qm.managers[req.Id].DispatchedRequests {
 		if reqs != 0 {
 			allZero = false
 			break
@@ -559,9 +558,7 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 	defer client.Close()
 
 	// create a new manager, dispatch it, and wait for results
-	log.Printf("Waiting for lock...")
 	qm.bfsMx.Lock()
-	log.Printf("Acquired Lock")
 	newId := types.BFSId(qm.idGenerator)
 	qm.idGenerator++
 
@@ -576,7 +573,6 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 	// our first request
 	qm.managers[newId].DispatchedRequests[shardID] = 1
 	qm.bfsMx.Unlock()
-	log.Printf("Released Lock")
 
 	bfsReq := &rpcTypes.BFSToShardRequest{
 		Root:         req.StartVertexID,
@@ -588,20 +584,14 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 	}
 	var bfsResp rpcTypes.BFSToShardResponse
 
-	log.Printf("performing RPC call to shard: %d", shardID)
 	err = client.Call("Shard.BFS", bfsReq, &bfsResp)
 	if err != nil {
 		return fmt.Errorf("RPC call failed: %w", err)
 	}
 
-	log.Printf("Waiting for response...")
-
 	// wait for all to finish before responding
 	<-qm.managers[newId].Done
 
-	log.Printf("UNLOCKING!!")
-
-	//resp.Vertices = qm.managers[newId].Vertices
 	resp.Vertices = slices.Collect(maps.Keys(qm.managers[newId].Vertices))
 
 	// no more use once we get our results
