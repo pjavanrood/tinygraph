@@ -2,6 +2,29 @@
 
 This milestone focused on two main deliverables: (1) an optimized distributed BFS implementation that uses shard-to-shard communication to reduce latency and improve scalability, and (2) a comprehensive benchmarking client that evaluates BFS performance by comparing the distributed implementation against a local baseline across multiple checkpoints.
 
+## Additional Internal Updates (Unrelated to BFS)
+
+### 1. MVCC Write-Path Safety Fix
+**Files:**  
+- `pkg/mvcc/vertex.go`  
+- `pkg/mvcc/edge.go`
+
+**Description:**  
+- Fixed an issue where `UpdateVertex` returned the previous version instead of the newly created one.  
+- Added a mutex *only around write operations* (`UpdateEdge`, `UpdateVertex`, `AddEdge`, `DeleteEdge`) to avoid unsafe concurrent modifications.  
+  Go slices/maps are not safe under concurrent writes, and the proposal’s CAS-based design does not directly translate to Go.  
+- **Read operations remain lock-free**, since they only traverse immutable historical versions.  
+- If this assumption is incorrect or if single-writer behavior is enforced elsewhere, the mutex can be removed.
+
+### 2. LDG-Style Partitioner
+**File:**  
+- `pkg/qm/partitioner.go`
+
+**Description:**  
+- Added a lightweight LDG-style partitioner that selects the shard with the lowest current load (based on vertex count).  
+- Provides more balanced shard assignment compared to the previous random partitioning strategy.
+
+
 ## Overview
 
 The optimized BFS uses a distributed, shard-to-shard communication pattern where shards coordinate directly with each other, reducing the Query Manager's (QM) role to initialization and result aggregation.
