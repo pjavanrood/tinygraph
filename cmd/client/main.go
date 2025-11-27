@@ -405,7 +405,7 @@ func runWorkload(workloadPath string, cfg *config.Config) {
 func main() {
 	// Parse command-line flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
-	workloadPath := flag.String("workload", "workloads/simple_graph.txt", "Path to workload file")
+	workloadPath := flag.String("workload", "data/simple_graph.txt", "Path to workload file")
 	flag.Parse()
 
 	// Load configuration

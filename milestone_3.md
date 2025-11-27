@@ -1,8 +1,31 @@
-# Optimized BFS Architecture
+# Milestone 3
+
+This milestone focused on two main deliverables: (1) an optimized distributed BFS implementation that uses shard-to-shard communication to reduce latency and improve scalability, and (2) a comprehensive benchmarking client that evaluates BFS performance by comparing the distributed implementation against a local baseline across multiple checkpoints.
 
 ## Overview
 
 The optimized BFS uses a distributed, shard-to-shard communication pattern where shards coordinate directly with each other, reducing the Query Manager's (QM) role to initialization and result aggregation.
+
+## Naive BFS Implementation
+
+Before implementing the optimized version, the system used a simple sequential BFS approach (`pkg/qm/query_manager.go:naiveBFS`). This implementation:
+
+**How it works**:
+1. Maintains a queue of vertices to process, starting with the start vertex
+2. Processes vertices **sequentially** one at a time
+3. For each vertex:
+   - Extracts the shard ID from the vertex ID
+   - Makes a **synchronous RPC call** to the shard to get neighbors
+   - Adds unvisited neighbors to the queue with incremented level
+4. Continues until the queue is empty or the radius limit is reached
+
+**Limitations**:
+- **Sequential processing**: Each vertex is processed one at a time, blocking on each RPC call
+- **No parallelism**: Cannot explore multiple vertices simultaneously across different shards
+- **High latency**: Network round-trips accumulate linearly, resulting in poor performance for large graphs
+- **Query Manager bottleneck**: All coordination happens through the QM, which must wait for each shard response before proceeding
+
+The naive implementation serves as a baseline for comparison, demonstrating the performance improvements achieved by the optimized distributed approach.
 
 ## Key Components
 
@@ -91,7 +114,7 @@ The optimized BFS uses a distributed, shard-to-shard communication pattern where
 3. **Updates pending counts**:
    - Increments `Received` for responding shard
    - For each `ExpectedResponse`, increments `Expected` for target shards
-4. **Checks completion**: If all shards have `Received >= Expected`, closes `done` channel
+4. **Checks completion**: If all shards have `Received == Expected`, closes `done` channel
 
 ### Step 7: Target Shards Process Cross-Shard Requests
 **Function**: `pkg/shard/shard.go:DistributedBFSFromShard`
@@ -169,7 +192,7 @@ Client → QM.BFS
          ↓
     QM: ReceiveBFSResult (multiple times, updates state)
          ↓
-    When all Received >= Expected: close(done)
+    When all Received == Expected: close(done)
          ↓
     QM.distributedBFS returns result
          ↓
@@ -275,20 +298,20 @@ The benchmark results are analyzed in `notebooks/bfs_performance_comparison.ipyn
 
 The notebook (`notebooks/bfs_performance_comparison.ipynb`) generates and saves the following visualizations:
 
-1. **BFS Latency vs Checkpoint** (`bfs_latency_vs_checkpoint.png`):
+1. **BFS Latency vs Checkpointnotebooks/** (`bfs_latency_vs_checkpoint.png`):
    - Line plot showing BFS latency progression across checkpoints
    - Log scale Y-axis to handle wide latency ranges
    - Separate lines for each dataset (local, parallel optimized, parallel naive)
    - **Insight**: Shows how latency scales as graph size increases
-   - ![BFS Latency vs Checkpoint](bfs_latency_vs_checkpoint.png)
+   - ![BFS Latency vs Checkpoint](notebooks/bfs_latency_vs_checkpoint.png)
 
-2. **BFS Latency by Start Vertex** (`bfs_latency_by_start_vertex.png`):
+2. **BFS Latency by Start Vertex** (`notebooks/bfs_latency_by_start_vertex.png`):
    - Scatter plot of latency vs start vertex ID
    - Log scale Y-axis
    - **Insight**: Reveals which vertices produce faster/slower BFS queries (may correlate with vertex degree, shard distribution, etc.)
-   - ![BFS Latency by Start Vertex](bfs_latency_by_start_vertex.png)
+   - ![BFS Latency by Start Vertex](notebooks/bfs_latency_by_start_vertex.png)
 
-3. **Checkpoint Comparison Table** (`checkpoint_comparison.csv`):
+3. **Checkpoint Comparison Table** (`notebooks/checkpoint_comparison.csv`):
    <!-- - Pivot table comparing latencies across checkpoints
    - Percentage difference calculations (parallel vs local)
    - **Insight**: Quantifies performance overhead of distributed implementation

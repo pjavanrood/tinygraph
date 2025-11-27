@@ -596,7 +596,7 @@ func (qm *QueryManager) ReceiveBFSResult(req *rpcTypes.ShardToQMBFSResponse, res
 	for shardID, pendingState := range state.pendingShards {
 		status := fmt.Sprintf("shard%d: E=%d R=%d", shardID, pendingState.Expected, pendingState.Received)
 		pendingStatus = append(pendingStatus, status)
-		if pendingState.Received < pendingState.Expected {
+		if pendingState.Received != pendingState.Expected {
 			allDone = false
 		}
 	}

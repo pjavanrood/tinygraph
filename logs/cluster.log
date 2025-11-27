@@ -127,3 +127,6 @@
 2025/11/27 01:22:55 ✓ Running 3 shard(s) with 3 replica(s) each
 2025/11/27 01:22:55 
 Press Ctrl+C to stop the cluster...
+2025/11/27 02:22:02 
+Shutting down cluster...
+2025/11/27 02:22:02 Cluster stopped.
