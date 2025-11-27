@@ -122,14 +122,17 @@ func (pbc *ParallelBenchmarkClient) getOrAddVertex(externalID string, conn *rpc.
 		"external_id": externalID,
 	}
 	var resp rpcTypes.AddVertexResponse
-	err := conn.Call("QueryManager.AddVertex", &rpcTypes.AddVertexRequest{
-		Properties: properties,
-	}, &resp)
-	rtt := time.Since(start)
-
-	if err != nil {
-		return "", err
+	for {
+		err := conn.Call("QueryManager.AddVertex", &rpcTypes.AddVertexRequest{
+			Properties: properties,
+		}, &resp)
+		if err == nil {
+			break
+		}
+		log.Printf("Failed to call add vertex")
+		time.Sleep(500 * time.Millisecond)
 	}
+	rtt := time.Since(start)
 
 	// Store the vertex ID (use LoadOrStore to handle race condition)
 	actual, _ := pbc.vertexIDMap.LoadOrStore(externalID, resp.VertexID)
@@ -165,11 +168,18 @@ func (pbc *ParallelBenchmarkClient) addEdge(fromVertexID, toVertexID string, wei
 		"weight": strconv.Itoa(weight),
 	}
 	var resp rpcTypes.AddEdgeResponse
-	err = conn.Call("QueryManager.AddEdge", &rpcTypes.AddEdgeRequest{
-		FromVertexID: fromInternal,
-		ToVertexID:   toInternal,
-		Properties:   properties,
-	}, &resp)
+	for {
+		err := conn.Call("QueryManager.AddEdge", &rpcTypes.AddEdgeRequest{
+			FromVertexID: fromInternal,
+			ToVertexID:   toInternal,
+			Properties:   properties,
+		}, &resp)
+		if err == nil {
+			break
+		}
+		log.Printf("RPC call to AddEdge failed")
+		time.Sleep(500 * time.Millisecond)
+	}
 	rtt := time.Since(start)
 
 	if err != nil {
@@ -215,17 +225,19 @@ func (pbc *ParallelBenchmarkClient) runBFSQueries(checkpointNum int) {
 		// Run BFS
 		start := time.Now()
 		var resp rpcTypes.BFSResponse
-		err := conn.Call("QueryManager.BFS", &rpcTypes.BFSRequest{
-			StartVertexID: startVertexID,
-			Radius:        pbc.bfsRadius,
-			Timestamp:     types.Timestamp(float64(time.Now().Unix())),
-		}, &resp)
-		rtt := time.Since(start)
-
-		if err != nil {
-			log.Printf("Error running BFS for vertex %s: %v", vertexID, err)
-			continue
+		for {
+			err := conn.Call("QueryManager.BFS", &rpcTypes.BFSRequest{
+				StartVertexID: startVertexID,
+				Radius:        pbc.bfsRadius,
+				Timestamp:     types.Timestamp(float64(time.Now().Unix())),
+			}, &resp)
+			if err == nil {
+				break
+			}
+			log.Printf("Failed to call BFS on query manager")
+			time.Sleep(500 * time.Millisecond)
 		}
+		rtt := time.Since(start)
 
 		bfsResultSet := make(map[types.VertexId]bool)
 		for _, v := range resp.Vertices {
@@ -241,7 +253,7 @@ func (pbc *ParallelBenchmarkClient) runBFSQueries(checkpointNum int) {
 				return true
 			},
 		)
-		
+
 		log.Printf("BFS result for vertex %s at checkpoint %d: %d vertices", vertexID, checkpointNum, len(bfsResult))
 
 		// Record measurement

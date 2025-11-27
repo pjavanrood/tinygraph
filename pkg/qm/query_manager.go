@@ -47,7 +47,7 @@ func NewQueryManager(cfg *config.Config) *QueryManager {
 
 	// Create a request queue for incoming connections
 	// Buffer size allows some queuing before blocking
-	requestQueue := make(chan net.Conn, 100)
+	requestQueue := make(chan net.Conn, 10000)
 
 	return &QueryManager{
 		config:         cfg,
@@ -512,15 +512,16 @@ func (qm *QueryManager) BFSResponse(req *rpcTypes.BFSFromShardRequest, resp *rpc
 		qm.managers[req.Id].Vertices[types.VertexId(vertexId)] = nil
 	}
 
-	sum := 0
+	allZero := true
 	for id, reqs := range qm.managers[req.Id].DispatchedRequests {
 		log.Printf("CHECKING SHARD %d: WAITING ON %d OPS", id, reqs)
-		if reqs >= 0 {
-			sum += reqs
+		if reqs != 0 {
+			allZero = false
+			break
 		}
 	}
 
-	if sum == 0 && qm.managers[req.Id].FirstRecvd {
+	if allZero && qm.managers[req.Id].FirstRecvd {
 		qm.managers[req.Id].Done <- nil
 	}
 
@@ -558,7 +559,9 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 	defer client.Close()
 
 	// create a new manager, dispatch it, and wait for results
+	log.Printf("Waiting for lock...")
 	qm.bfsMx.Lock()
+	log.Printf("Acquired Lock")
 	newId := types.BFSId(qm.idGenerator)
 	qm.idGenerator++
 
@@ -573,6 +576,7 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 	// our first request
 	qm.managers[newId].DispatchedRequests[shardID] = 1
 	qm.bfsMx.Unlock()
+	log.Printf("Released Lock")
 
 	bfsReq := &rpcTypes.BFSToShardRequest{
 		Root:         req.StartVertexID,
@@ -743,7 +747,7 @@ func (qm *QueryManager) Start() error {
 	qm.replicaManager.Start()
 
 	// Start worker pool (50 workers)
-	numWorkers := 50
+	numWorkers := 10000
 	for i := 0; i < numWorkers; i++ {
 		go func() {
 			for conn := range qm.requestQueue {
