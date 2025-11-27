@@ -2,8 +2,6 @@
 
 This milestone focused on two main deliverables: (1) an optimized distributed BFS implementation that uses shard-to-shard communication to reduce latency and improve scalability, and (2) a comprehensive benchmarking client that evaluates BFS performance by comparing the distributed implementation against a local baseline across multiple checkpoints.
 
----
-
 ## Additional Internal Updates (Unrelated to BFS)
 
 ### 1. MVCC Write-Path Safety Fix
