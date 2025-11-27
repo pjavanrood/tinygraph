@@ -24,6 +24,7 @@ type Measurement struct {
 	VertexTo   string        `json:"vertex_to,omitempty"`
 	BFSStart   string        `json:"bfs_start,omitempty"`
 	BFSRadius  int           `json:"bfs_radius,omitempty"`
+	BFSResult  []string      `json:"bfs_result,omitempty"` // Vertices found by BFS
 	Timestamp  time.Time     `json:"timestamp"`
 }
 
@@ -65,7 +66,7 @@ func parseWorkload(workload []string) []Operation {
 		if line == "" {
 			continue
 		}
-		fields := strings.Split(line, "\t")
+		fields := strings.Fields(line)
 		if len(fields) < 2 || fields[0] == "#" {
 			continue // Skip comments
 		}
@@ -92,7 +93,7 @@ func parseWorkload(workload []string) []Operation {
 func main() {
 	// Parse command-line flags
 	configPath := flag.String("config", "config.yaml", "Path to configuration file")
-	workloadPath := flag.String("workload", "cmd/client/workloads/simple_graph.txt", "Path to workload file")
+	workloadPath := flag.String("workload", "data/simple_graph.txt", "Path to workload file")
 	numGoroutines := flag.Int("goroutines", 4, "Number of parallel goroutines")
 	numCheckpoints := flag.Int("checkpoints", 3, "Number of checkpoints")
 	topVertices := flag.Int("top-vertices", 5, "Number of top vertices to select by PageRank for BFS queries")
@@ -108,6 +109,8 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
+
+	cfg.Logging.Level = "INFO" // Force INFO level for benchmark
 
 	// Update log level from config
 	log.SetLevel(cfg.GetLogLevel())
@@ -170,7 +173,7 @@ func main() {
 		}
 
 		parallelClient := NewParallelBenchmarkClient(cfg, *numGoroutines, *numCheckpoints, bfsVertices, *bfsRadius, *rateLimit)
-		defer parallelClient.conn.Close()
+		defer parallelClient.Close()
 
 		parallelResults := parallelClient.Run(workload)
 

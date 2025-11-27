@@ -18,8 +18,8 @@ import (
 // ParallelBenchmarkClient handles parallel ingestion
 type ParallelBenchmarkClient struct {
 	cfg              *config.Config
-	conn             *rpc.Client
-	vertexIDMap      sync.Map // external vertex ID -> internal vertex ID
+	connPool         chan *rpc.Client // Connection pool for concurrent access
+	vertexIDMap      sync.Map         // external vertex ID -> internal vertex ID
 	measurements     []Measurement
 	measurementsLock sync.Mutex
 	numGoroutines    int
@@ -29,12 +29,21 @@ type ParallelBenchmarkClient struct {
 	totalOps         int64
 	checkpointOps    []int64       // Operations completed at each checkpoint
 	rateLimiter      *rate.Limiter // Rate limiter for operations
+	serverAddr       string        // Server address for creating new connections
 }
 
 func NewParallelBenchmarkClient(cfg *config.Config, numGoroutines, numCheckpoints int, bfsVertices []string, bfsRadius int, rateLimit float64) *ParallelBenchmarkClient {
-	conn, err := rpc.Dial("tcp", fmt.Sprintf("%s:%d", cfg.QueryManager.Host, cfg.QueryManager.Port))
-	if err != nil {
-		log.Fatalf("Failed to connect to query manager: %v", err)
+	serverAddr := fmt.Sprintf("%s:%d", cfg.QueryManager.Host, cfg.QueryManager.Port)
+
+	// Create connection pool with one connection per goroutine
+	// This ensures each goroutine has its own connection, avoiding thread-safety issues
+	connPool := make(chan *rpc.Client, numGoroutines+1)
+	for i := 0; i < numGoroutines+1; i++ {
+		conn, err := rpc.Dial("tcp", serverAddr)
+		if err != nil {
+			log.Fatalf("Failed to connect to query manager (connection %d): %v", i, err)
+		}
+		connPool <- conn
 	}
 
 	// Create rate limiter if rate limit is specified
@@ -46,7 +55,8 @@ func NewParallelBenchmarkClient(cfg *config.Config, numGoroutines, numCheckpoint
 
 	return &ParallelBenchmarkClient{
 		cfg:            cfg,
-		conn:           conn,
+		connPool:       connPool,
+		serverAddr:     serverAddr,
 		measurements:   make([]Measurement, 0),
 		numGoroutines:  numGoroutines,
 		numCheckpoints: numCheckpoints,
@@ -57,13 +67,50 @@ func NewParallelBenchmarkClient(cfg *config.Config, numGoroutines, numCheckpoint
 	}
 }
 
+// getConn gets a connection from the pool
+func (pbc *ParallelBenchmarkClient) getConn() *rpc.Client {
+	return <-pbc.connPool
+}
+
+// putConn returns a connection to the pool
+func (pbc *ParallelBenchmarkClient) putConn(conn *rpc.Client) {
+	// Check if connection is still valid, recreate if needed
+	if conn == nil {
+		// Recreate connection if it was closed
+		newConn, err := rpc.Dial("tcp", pbc.serverAddr)
+		if err != nil {
+			log.Printf("Failed to recreate connection: %v", err)
+			return
+		}
+		pbc.connPool <- newConn
+		return
+	}
+	pbc.connPool <- conn
+}
+
+// Close closes all connections in the pool
+func (pbc *ParallelBenchmarkClient) Close() {
+	// Drain the pool and close all connections
+	for {
+		select {
+		case conn := <-pbc.connPool:
+			if conn != nil {
+				conn.Close()
+			}
+		default:
+			// Pool is empty, we're done
+			return
+		}
+	}
+}
+
 func (pbc *ParallelBenchmarkClient) recordMeasurement(m Measurement) {
 	pbc.measurementsLock.Lock()
 	defer pbc.measurementsLock.Unlock()
 	pbc.measurements = append(pbc.measurements, m)
 }
 
-func (pbc *ParallelBenchmarkClient) getOrAddVertex(externalID string) (types.VertexId, error) {
+func (pbc *ParallelBenchmarkClient) getOrAddVertex(externalID string, conn *rpc.Client) (types.VertexId, error) {
 	// Check if vertex already exists
 	if val, ok := pbc.vertexIDMap.Load(externalID); ok {
 		return val.(types.VertexId), nil
@@ -75,7 +122,7 @@ func (pbc *ParallelBenchmarkClient) getOrAddVertex(externalID string) (types.Ver
 		"external_id": externalID,
 	}
 	var resp rpcTypes.AddVertexResponse
-	err := pbc.conn.Call("QueryManager.AddVertex", &rpcTypes.AddVertexRequest{
+	err := conn.Call("QueryManager.AddVertex", &rpcTypes.AddVertexRequest{
 		Properties: properties,
 	}, &resp)
 	rtt := time.Since(start)
@@ -100,14 +147,14 @@ func (pbc *ParallelBenchmarkClient) getOrAddVertex(externalID string) (types.Ver
 	return actual.(types.VertexId), nil
 }
 
-func (pbc *ParallelBenchmarkClient) addEdge(fromVertexID, toVertexID string, weight int) error {
+func (pbc *ParallelBenchmarkClient) addEdge(fromVertexID, toVertexID string, weight int, conn *rpc.Client) error {
 	// Get or add vertices
-	fromInternal, err := pbc.getOrAddVertex(fromVertexID)
+	fromInternal, err := pbc.getOrAddVertex(fromVertexID, conn)
 	if err != nil {
 		return fmt.Errorf("failed to get/add from vertex: %w", err)
 	}
 
-	toInternal, err := pbc.getOrAddVertex(toVertexID)
+	toInternal, err := pbc.getOrAddVertex(toVertexID, conn)
 	if err != nil {
 		return fmt.Errorf("failed to get/add to vertex: %w", err)
 	}
@@ -118,7 +165,7 @@ func (pbc *ParallelBenchmarkClient) addEdge(fromVertexID, toVertexID string, wei
 		"weight": strconv.Itoa(weight),
 	}
 	var resp rpcTypes.AddEdgeResponse
-	err = pbc.conn.Call("QueryManager.AddEdge", &rpcTypes.AddEdgeRequest{
+	err = conn.Call("QueryManager.AddEdge", &rpcTypes.AddEdgeRequest{
 		FromVertexID: fromInternal,
 		ToVertexID:   toInternal,
 		Properties:   properties,
@@ -151,6 +198,10 @@ func (pbc *ParallelBenchmarkClient) addEdge(fromVertexID, toVertexID string, wei
 func (pbc *ParallelBenchmarkClient) runBFSQueries(checkpointNum int) {
 	log.Printf("Running BFS queries at checkpoint %d", checkpointNum)
 
+	// Get a connection for BFS queries
+	conn := pbc.getConn()
+	defer pbc.putConn(conn)
+
 	for _, vertexID := range pbc.bfsVertices {
 		// Get internal vertex ID
 		val, ok := pbc.vertexIDMap.Load(vertexID)
@@ -164,7 +215,7 @@ func (pbc *ParallelBenchmarkClient) runBFSQueries(checkpointNum int) {
 		// Run BFS
 		start := time.Now()
 		var resp rpcTypes.BFSResponse
-		err := pbc.conn.Call("QueryManager.BFS", &rpcTypes.BFSRequest{
+		err := conn.Call("QueryManager.BFS", &rpcTypes.BFSRequest{
 			StartVertexID: startVertexID,
 			Radius:        pbc.bfsRadius,
 			Timestamp:     types.Timestamp(float64(time.Now().Unix())),
@@ -176,14 +227,32 @@ func (pbc *ParallelBenchmarkClient) runBFSQueries(checkpointNum int) {
 			continue
 		}
 
+		bfsResultSet := make(map[types.VertexId]bool)
+		for _, v := range resp.Vertices {
+			bfsResultSet[v] = true
+		}
+		// Convert VertexId slice to string slice
+		bfsResult := make([]string, 0)
+		pbc.vertexIDMap.Range(
+			func(key, value interface{}) bool {
+				if bfsResultSet[value.(types.VertexId)] {
+					bfsResult = append(bfsResult, key.(string))
+				}
+				return true
+			},
+		)
+		
+		log.Printf("BFS result for vertex %s at checkpoint %d: %d vertices", vertexID, checkpointNum, len(bfsResult))
+
 		// Record measurement
 		pbc.recordMeasurement(Measurement{
 			Operation:  "bfs",
 			RTT:        rtt,
-			RTTMs:      float64(rtt) / float64(time.Millisecond),
+			RTTMs:      float64(rtt.Milliseconds()),
 			Checkpoint: checkpointNum,
 			BFSStart:   vertexID,
 			BFSRadius:  pbc.bfsRadius,
+			BFSResult:  bfsResult,
 			Timestamp:  time.Now(),
 		})
 	}
@@ -214,8 +283,12 @@ func (pbc *ParallelBenchmarkClient) Run(workload []string) BenchmarkResults {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// Each goroutine gets its own connection from the pool
+			conn := pbc.getConn()
+			defer pbc.putConn(conn)
+
 			for op := range opChan {
-				err := pbc.addEdge(op.From, op.To, op.Weight)
+				err := pbc.addEdge(op.From, op.To, op.Weight, conn)
 				if err != nil {
 					log.Printf("Error adding edge %s -> %s: %v", op.From, op.To, err)
 				}
@@ -252,7 +325,7 @@ func (pbc *ParallelBenchmarkClient) Run(workload []string) BenchmarkResults {
 				time.Sleep(50 * time.Millisecond)
 			}
 			// Give a bit more time for any in-flight operations
-			time.Sleep(200 * time.Millisecond)
+			time.Sleep(2000 * time.Millisecond)
 
 			// Run BFS queries
 			pbc.runBFSQueries(checkpointIdx + 1)
