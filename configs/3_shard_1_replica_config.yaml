@@ -1,0 +1,56 @@
+# TinyGraph Configuration File
+# This file defines the distributed graph database cluster configuration
+
+query_manager:
+  host: "localhost"
+  port: 9090
+  bfs_type: "optimized"  # Options: "naive", "optimized"
+
+# Shard configuration - each shard stores a partition of the graph
+# Each shard has multiple replicas that use Raft for consensus
+shards:
+  - id: 0
+    replicas:
+      # Primary replica (bootstrap the Raft cluster)
+      - id: 0
+        rpc_host: "localhost"
+        rpc_port: 9091
+        raft_host: "localhost"
+        raft_port: 10091
+        raft_dir: "./raft-data/shard-0-replica-0"
+        bootstrap: true
+    
+  - id: 1
+    replicas:
+      # Primary replica (bootstrap the Raft cluster)
+      - id: 0
+        rpc_host: "localhost"
+        rpc_port: 9094
+        raft_host: "localhost"
+        raft_port: 10094
+        raft_dir: "./raft-data/shard-1-replica-0"
+        bootstrap: true
+    
+  - id: 2
+    replicas:
+      # Primary replica (bootstrap the Raft cluster)
+      - id: 0
+        rpc_host: "localhost"
+        rpc_port: 9097
+        raft_host: "localhost"
+        raft_port: 10097
+        raft_dir: "./raft-data/shard-2-replica-0"
+        bootstrap: true
+
+# Partitioning strategy defines how vertices/edges are distributed across shards
+partitioning:
+  algorithm: "hash"  # Options: "hash", ...
+
+# Replication strategy defines how data is replicated for fault tolerance
+replication:
+  strategy: "none"  # Options: "none", "raft"
+  replication_factor: 1  # Number of replicas per shard
+
+logging:
+  level: "OFF"  # Options: "OFF", "FATAL", "ERROR", "WARN", "INFO", "DEBUG"
+

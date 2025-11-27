@@ -59,8 +59,8 @@ func (v *Vertex) UpdateVertex(ts types.Timestamp, prop *VertexProp) *Vertex {
 
 // AddEdge creates or updates an outgoing edge.
 func (v *Vertex) AddEdge(to types.VertexId, ts types.Timestamp) error {
-	v.mu.Lock()         // ADD: Acquire write lock
-	defer v.mu.Unlock() // ADD: Release write lock
+	v.mu.Lock()                  // ADD: Acquire write lock
+    defer v.mu.Unlock()          // ADD: Release write lock
 
 	if cur, ok := v.Edges[to]; ok {
 		v.Edges[to] = cur.UpdateEdge(ts, cur.Prop)

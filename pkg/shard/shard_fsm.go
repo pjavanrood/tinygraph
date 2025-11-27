@@ -4,7 +4,7 @@ import (
 	"container/list"
 	"fmt"
 	"maps"
-	"net"
+	"math/rand/v2"
 	"net/rpc"
 	"slices"
 	"strconv"
@@ -36,6 +36,7 @@ type ShardFSM struct {
 	Id           ShardId
 	config       *config.Config
 	bfsInstances map[types.BFSId]*bfs.BFSInstance
+	BfsMu        sync.Mutex
 }
 
 // addVertex adds a new vertex to the shard
@@ -209,7 +210,7 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 		curr := q.Front().Value.(*BFSEntry)
 		q.Remove(q.Front())
 
-		if _, vis := instance.Visited[internalTypes.VertexId(curr.Id)]; vis {
+		if vis := instance.Visited[internalTypes.VertexId(curr.Id)]; vis {
 			continue
 		}
 
@@ -250,34 +251,38 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 							defer wgmx.Unlock()
 
 							// connect to the shard
-							leaderHostname := func() string {
-								leaderData := &rpcTypes.GetLeaderIdRequest{
-									ShardId: shardId,
-								}
-								var leaderResponse rpcTypes.GetLeaderIdResponse
+							/*
+								leaderHostname := func() string {
+									leaderData := &rpcTypes.GetLeaderIdRequest{
+										ShardId: shardId,
+									}
+									var leaderResponse rpcTypes.GetLeaderIdResponse
 
-								client, err := rpc.Dial("tcp", net.JoinHostPort(s.config.QueryManager.Host, strconv.Itoa(s.config.QueryManager.Port)))
-								if err != nil {
-									log.Printf("Failed to connect to QueryManager")
-									return ""
-								}
+									client, err := rpc.Dial("tcp", net.JoinHostPort(s.config.QueryManager.Host, strconv.Itoa(s.config.QueryManager.Port)))
+									if err != nil {
+										log.Printf("Failed to connect to QueryManager")
+										return ""
+									}
 
-								err = client.Call("QueryManager.GetLeaderId", leaderData, &leaderResponse)
-								if err != nil {
-									log.Printf("RPC call to shard %d failed: %w", shardConfig.ID, err)
-									return ""
-								}
-								defer client.Close()
+									err = client.Call("QueryManager.GetLeaderId", leaderData, &leaderResponse)
+									if err != nil {
+										log.Printf("RPC call to shard %d failed: %w", shardConfig.ID, err)
+										return ""
+									}
+									defer client.Close()
 
-								var addr string
-								addr, err = shardConfig.GetReplicaAddress(leaderResponse.LeaderId)
-								if err != nil {
-									log.Printf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
-									return ""
-								}
+									var addr string
+									addr, err = shardConfig.GetReplicaAddress(leaderResponse.LeaderId)
+									if err != nil {
+										log.Printf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+										return ""
+									}
 
-								return addr
-							}()
+									return addr
+								}()
+							*/
+							replicas := shardConfig.Replicas
+							leaderHostname := replicas[rand.IntN(len(shardConfig.Replicas))].GetRPCAddress()
 
 							if leaderHostname == "" {
 								log.Printf("Failed getting leader hostname")
@@ -286,7 +291,7 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 
 							client, err := rpc.Dial("tcp", leaderHostname)
 							if err != nil {
-								fmt.Printf("Failed to dial shard leader")
+								log.Printf("Failed to dial shard leader")
 								return
 							}
 							defer client.Close()
@@ -297,6 +302,7 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 								Timestamp:    req.Timestamp,
 								Id:           req.Id,
 								CallbackAddr: req.CallbackAddr,
+								FirstReq:     false,
 							}
 							var bfsResp rpcTypes.BFSToShardResponse
 							err = client.Call("Shard.BFS", bfsReq, &bfsResp)
@@ -316,11 +322,13 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 		}
 	}
 
+	wg.Wait()
+
 	// send the results to the callback addr
 
 	client, err := rpc.Dial("tcp", req.CallbackAddr)
 	if err != nil {
-		fmt.Printf("Unable to connect to client %s", req.CallbackAddr)
+		log.Printf("Unable to connect to client %s", req.CallbackAddr)
 		return
 	}
 	defer client.Close()
@@ -329,11 +337,12 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 		Shard:              types.ShardId(s.Id),
 		Vertices:           localVisited,
 		DispatchedRequests: dispatchedRequests,
+		FirstResp:          req.FirstReq,
 	}
 	var toClientResp rpcTypes.BFSFromShardResponse
 	err = client.Call("QueryManager.BFSResponse", toClientReq, &toClientResp)
 	if err != nil {
-		fmt.Printf("RPC to BFSResponse failed: %w", err)
+		log.Printf("RPC to BFSResponse failed: %w", err)
 		return
 	}
 }
@@ -355,6 +364,7 @@ func (s *ShardFSM) BFS(req rpcTypes.BFSToShardRequest, resp *rpcTypes.BFSToShard
 		return fmt.Errorf("Vertex with ID \"%s\" does not exist at timestamp %f", req.Root, req.Timestamp)
 	}
 
+	s.BfsMu.Lock()
 	// find or create bfsInstances entry
 	if _, exists := s.bfsInstances[req.Id]; !exists {
 		s.bfsInstances[req.Id] = &bfs.BFSInstance{
@@ -363,6 +373,7 @@ func (s *ShardFSM) BFS(req rpcTypes.BFSToShardRequest, resp *rpcTypes.BFSToShard
 			CallbackAddress: req.CallbackAddr,
 		}
 	}
+	s.BfsMu.Unlock()
 
 	go s.bfs(req)
 

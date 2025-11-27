@@ -2,9 +2,11 @@ package qm
 
 import (
 	"fmt"
+	"maps"
 	"math/rand"
 	"net"
 	"net/rpc"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -13,23 +15,26 @@ import (
 	"github.com/pjavanrood/tinygraph/internal/config"
 	"github.com/pjavanrood/tinygraph/internal/types"
 	"github.com/pjavanrood/tinygraph/internal/util"
+	"github.com/pjavanrood/tinygraph/pkg/replica"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
 var log = util.New("QueryManager", util.LogLevelInfo)
 
 type BfsManager struct {
-	Id                 types.BFSId
-	Vertices           []types.VertexId // we expect each shard to return a vertex id only once
+	Id types.BFSId
+	//Vertices           []types.VertexId // we expect each shard to return a vertex id only once
+	Vertices           map[types.VertexId]interface{}
 	DispatchedRequests map[int]int
 	Done               chan interface{}
+	FirstRecvd         bool
 }
 
 // QueryManager handles client queries and coordinates shards
 type QueryManager struct {
 	config         *config.Config
-	replicaManager ReplicaManager
-	connSemaphore  chan struct{}               // Limits concurrent connections
+	replicaManager replica.ReplicaManager
+	requestQueue   chan net.Conn               // Queue of incoming connection requests
 	managers       map[types.BFSId]*BfsManager // maps BFSIds to a manager
 	idGenerator    uint
 	bfsMx          sync.Mutex
@@ -40,14 +45,14 @@ func NewQueryManager(cfg *config.Config) *QueryManager {
 	// Update log level from config
 	log.SetLevel(cfg.GetLogLevel())
 
-	// Create a semaphore to limit concurrent connections (max 50)
-	maxConcurrentConns := 50
-	connSemaphore := make(chan struct{}, maxConcurrentConns)
+	// Create a request queue for incoming connections
+	// Buffer size allows some queuing before blocking
+	requestQueue := make(chan net.Conn, 100)
 
 	return &QueryManager{
 		config:         cfg,
-		replicaManager: NewPushBasedReplicaManager(cfg),
-		connSemaphore:  connSemaphore,
+		replicaManager: replica.NewPushBasedReplicaManager(cfg),
+		requestQueue:   requestQueue,
 		managers:       make(map[types.BFSId]*BfsManager),
 		idGenerator:    0,
 	}
@@ -376,19 +381,6 @@ func (qm *QueryManager) GetVertex(req *rpcTypes.GetVertexRequest, resp *rpcTypes
 	}, resp)
 }
 
-// GetLeaderId
-func (qm *QueryManager) GetLeaderId(req *rpcTypes.GetLeaderIdRequest, resp *rpcTypes.GetLeaderIdResponse) error {
-	log.Printf("Got LeaderID Request")
-	leader, err := qm.replicaManager.GetLeaderID(req.ShardId)
-	if err != nil {
-		log.Printf("Failed to fetch leader for shard %d", req.ShardId)
-		return err
-	}
-	resp.LeaderId = leader
-
-	return nil
-}
-
 // AddEdge is the RPC handler for adding an edge
 func (qm *QueryManager) AddEdge(req *rpcTypes.AddEdgeRequest, resp *rpcTypes.AddEdgeResponse) error {
 	log.Printf("Received AddEdge request")
@@ -499,25 +491,36 @@ func (qm *QueryManager) BFSResponse(req *rpcTypes.BFSFromShardRequest, resp *rpc
 	qm.bfsMx.Lock()
 	defer qm.bfsMx.Unlock()
 
+	log.Printf("Received response for request %d from shard %d", req.Id, req.Shard)
+
 	// lookup the manager (if it doesn't exist, ignore it)
 	if _, exists := qm.managers[req.Id]; !exists {
 		return nil
+	}
+
+	if req.FirstResp {
+		qm.managers[req.Id].FirstRecvd = true
 	}
 
 	qm.managers[req.Id].DispatchedRequests[int(req.Shard)]--
 	for shard, reqs := range req.DispatchedRequests {
 		qm.managers[req.Id].DispatchedRequests[shard] += reqs
 	}
+	//for _, vertexId := range req.Vertices {
 	for _, vertexId := range req.Vertices {
-		qm.managers[req.Id].Vertices = append(qm.managers[req.Id].Vertices, vertexId)
+		//qm.managers[req.Id].Vertices = append(qm.managers[req.Id].Vertices, vertexId)
+		qm.managers[req.Id].Vertices[types.VertexId(vertexId)] = nil
 	}
 
 	sum := 0
-	for _, reqs := range qm.managers[req.Id].DispatchedRequests {
-		sum += reqs
+	for id, reqs := range qm.managers[req.Id].DispatchedRequests {
+		log.Printf("CHECKING SHARD %d: WAITING ON %d OPS", id, reqs)
+		if reqs >= 0 {
+			sum += reqs
+		}
 	}
 
-	if sum == 0 {
+	if sum == 0 && qm.managers[req.Id].FirstRecvd {
 		qm.managers[req.Id].Done <- nil
 	}
 
@@ -558,16 +561,18 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 	qm.bfsMx.Lock()
 	newId := types.BFSId(qm.idGenerator)
 	qm.idGenerator++
-	qm.bfsMx.Unlock()
 
 	qm.managers[newId] = &BfsManager{
-		Id:                 newId,
-		Vertices:           make([]types.VertexId, 0),
+		Id: newId,
+		//Vertices:           make([]types.VertexId, 0),
+		Vertices:           make(map[types.VertexId]interface{}),
 		DispatchedRequests: make(map[int]int),
 		Done:               make(chan interface{}),
+		FirstRecvd:         false,
 	}
 	// our first request
 	qm.managers[newId].DispatchedRequests[shardID] = 1
+	qm.bfsMx.Unlock()
 
 	bfsReq := &rpcTypes.BFSToShardRequest{
 		Root:         req.StartVertexID,
@@ -575,24 +580,37 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 		Timestamp:    req.Timestamp,
 		Id:           newId,
 		CallbackAddr: net.JoinHostPort(qm.config.QueryManager.Host, strconv.Itoa(qm.config.QueryManager.Port)),
+		FirstReq:     true,
 	}
 	var bfsResp rpcTypes.BFSToShardResponse
 
+	log.Printf("performing RPC call to shard: %d", shardID)
 	err = client.Call("Shard.BFS", bfsReq, &bfsResp)
 	if err != nil {
 		return fmt.Errorf("RPC call failed: %w", err)
 	}
 
+	log.Printf("Waiting for response...")
+
 	// wait for all to finish before responding
 	<-qm.managers[newId].Done
 
-	resp.Vertices = qm.managers[newId].Vertices
+	log.Printf("UNLOCKING!!")
+
+	//resp.Vertices = qm.managers[newId].Vertices
+	resp.Vertices = slices.Collect(maps.Keys(qm.managers[newId].Vertices))
+
+	// no more use once we get our results
+	delete(qm.managers, newId)
 
 	return nil
 }
 
 // BFS is the RPC handler for performing a BFS
 func (qm *QueryManager) BFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSResponse) error {
+	if qm.config.QueryManager.BFSType == "optimized" {
+		return qm.ShardedBFS(req, resp)
+	}
 	log.Printf("Received BFS request")
 
 	timestamp := req.Timestamp
@@ -644,7 +662,7 @@ func (qm *QueryManager) BFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSResponse
 
 	resp.Vertices = make([]types.VertexId, len(visited))
 	i := 0
-	for vertex, _ := range visited {
+	for vertex := range visited {
 		resp.Vertices[i] = vertex
 		i++
 	}
@@ -724,7 +742,17 @@ func (qm *QueryManager) Start() error {
 	// Start the replica manager
 	qm.replicaManager.Start()
 
-	// Accept and serve connections
+	// Start worker pool (50 workers)
+	numWorkers := 50
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			for conn := range qm.requestQueue {
+				server.ServeConn(conn)
+			}
+		}()
+	}
+
+	// Accept connections and enqueue them
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -732,15 +760,7 @@ func (qm *QueryManager) Start() error {
 			continue
 		}
 
-		// Acquire semaphore before spawning goroutine
-		qm.connSemaphore <- struct{}{}
-
-		go func(c net.Conn) {
-			defer func() {
-				// Release semaphore when done
-				<-qm.connSemaphore
-			}()
-			server.ServeConn(c)
-		}(conn)
+		// Enqueue connection for worker to process
+		qm.requestQueue <- conn
 	}
 }

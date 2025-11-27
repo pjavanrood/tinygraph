@@ -1,0 +1,1 @@
+go run cmd/benchmark/*.go -config 3_shard_3_replica_config.yaml -workload ~/data/web-Google.txt -goroutines 10 -checkpoints 50 -bfs-radius 10 -rate-limit 5000 > logs/benchmark.log 2>&1

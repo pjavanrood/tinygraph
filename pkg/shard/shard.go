@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/rpc"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +17,7 @@ import (
 	"github.com/pjavanrood/tinygraph/internal/config"
 	"github.com/pjavanrood/tinygraph/internal/util"
 	mvccTypes "github.com/pjavanrood/tinygraph/pkg/mvcc"
+	"github.com/pjavanrood/tinygraph/pkg/replica"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
 
@@ -30,13 +33,116 @@ const (
 	DeleteAll
 )
 
+// connectionPool manages a pool of RPC connections for a specific shard
+type connectionPool struct {
+	connections chan *rpc.Client
+	address     string
+	mu          sync.Mutex
+	maxSize     int
+	closed      bool
+}
+
+// newConnectionPool creates a new connection pool for a shard
+func newConnectionPool(address string, maxSize int) *connectionPool {
+	return &connectionPool{
+		connections: make(chan *rpc.Client, maxSize),
+		address:     address,
+		maxSize:     maxSize,
+	}
+}
+
+// getConnection gets a connection from the pool or creates a new one
+func (cp *connectionPool) getConnection() (*rpc.Client, error) {
+	cp.mu.Lock()
+	closed := cp.closed
+	cp.mu.Unlock()
+
+	if closed {
+		// Pool is closed, create new connection directly
+		return rpc.Dial("tcp", cp.address)
+	}
+
+	select {
+	case client := <-cp.connections:
+		// Check if connection is still valid
+		if client != nil {
+			return client, nil
+		}
+	default:
+		// No connection available, create new one
+	}
+
+	// Create new connection
+	client, err := rpc.Dial("tcp", cp.address)
+	if err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+// returnConnection returns a connection to the pool or closes it if pool is full
+func (cp *connectionPool) returnConnection(client *rpc.Client) {
+	if client == nil {
+		return
+	}
+
+	cp.mu.Lock()
+	closed := cp.closed
+	cp.mu.Unlock()
+
+	if closed {
+		// Pool is closed, close the connection
+		client.Close()
+		return
+	}
+
+	select {
+	case cp.connections <- client:
+		// Successfully returned to pool
+	default:
+		// Pool is full, close the connection
+		client.Close()
+	}
+}
+
+// closeAll closes all connections in the pool
+func (cp *connectionPool) closeAll() {
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+
+	if cp.closed {
+		return // Already closed
+	}
+
+	cp.closed = true
+
+	// Drain and close all connections
+	for {
+		select {
+		case client := <-cp.connections:
+			if client != nil {
+				client.Close()
+			}
+		default:
+			// No more connections in pool
+			return
+		}
+	}
+}
+
 // Shard wraps a ShardFSM with Raft consensus functionality
 // It implements the raft.FSM interface and handles all RPC calls
 type Shard struct {
-	raft          *raft.Raft
-	shardFSM      *ShardFSM
-	mu            sync.Mutex
-	connSemaphore chan struct{} // Limits concurrent connections
+	raft           *raft.Raft
+	shardFSM       *ShardFSM
+	mu             sync.Mutex
+	requestQueue   chan net.Conn // Queue of incoming connection requests
+	config         *config.Config
+	shardID        int
+	replicaManager replica.ReplicaManager
+	// Connection pools per shard (keyed by shardID)
+	connectionPools map[int]*connectionPool
+	poolMu          sync.RWMutex
 }
 
 // ShardLogOp represents an operation to be logged and replicated via Raft
@@ -335,6 +441,78 @@ func (s *Shard) GetNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *rpcT
 	return s.shardFSM.getNeighbors(req, resp)
 }
 
+// getShardIDFromVertexID extracts shard ID from vertex ID format: "shardID-randomHex"
+func (s *Shard) getShardIDFromVertexID(vertexID string) (int, error) {
+	parts := strings.Split(vertexID, "-")
+	if len(parts) < 2 {
+		return 0, fmt.Errorf("invalid vertex ID format: %s", vertexID)
+	}
+	shardID, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, fmt.Errorf("invalid shard ID in vertex ID: %s", vertexID)
+	}
+	return shardID, nil
+}
+
+// getOrCreateConnectionPool gets or creates a connection pool for a shard
+// It checks the current leader and invalidates the pool if the leader has changed
+func (s *Shard) getOrCreateConnectionPool(targetShardID int) (*connectionPool, error) {
+	// Get target shard config
+	targetShardConfig, err := s.config.GetShardByID(targetShardID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get shard config for shard %d: %w", targetShardID, err)
+	}
+
+	// Use replica manager to get the current leader ID
+	currentLeaderID, err := s.replicaManager.GetLeaderID(targetShardID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get leader ID for shard %d: %w", targetShardID, err)
+	}
+
+	currentAddr, err := targetShardConfig.GetReplicaAddress(currentLeaderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get replica address for shard %d: %w", targetShardID, err)
+	}
+
+	// Acquire write lock to check and create pool atomically
+	s.poolMu.Lock()
+	defer s.poolMu.Unlock()
+
+	// Check if we have an existing pool
+	if pool, exists := s.connectionPools[targetShardID]; exists {
+		// Check if the pool's address matches the current leader address
+		pool.mu.Lock()
+		poolAddr := pool.address
+		poolClosed := pool.closed
+		pool.mu.Unlock()
+
+		if !poolClosed && poolAddr == currentAddr {
+			// Pool is still valid, reuse it
+			return pool, nil
+		}
+		// Leader has changed or pool is closed, invalidate it
+		pool.closeAll()
+		delete(s.connectionPools, targetShardID)
+	}
+
+	// Create new connection pool (max 10 connections per shard)
+	pool := newConnectionPool(currentAddr, 10)
+	s.connectionPools[targetShardID] = pool
+
+	return pool, nil
+}
+
+// invalidateConnectionPool removes the connection pool for a shard (e.g., when leader changes)
+func (s *Shard) invalidateConnectionPool(targetShardID int) {
+	s.poolMu.Lock()
+	defer s.poolMu.Unlock()
+
+	if pool, exists := s.connectionPools[targetShardID]; exists {
+		pool.closeAll()
+		delete(s.connectionPools, targetShardID)
+	}
+}
+
 func (s *Shard) BFS(req rpcTypes.BFSToShardRequest, resp *rpcTypes.BFSToShardResponse) error {
 	// read requests do not need to go through the leader
 	/*
@@ -425,13 +603,17 @@ func NewShard(cfg *config.Config, shardID int, replicaID int) (*Shard, error) {
 	// Create the underlying FSM
 	shardFSM := newShardFSM(cfg, shardID)
 
-	// Create a semaphore to limit concurrent connections (max 50)
-	maxConcurrentConns := 50
-	connSemaphore := make(chan struct{}, maxConcurrentConns)
+	// Create a request queue for incoming connections
+	// Buffer size allows some queuing before blocking
+	requestQueue := make(chan net.Conn, 100)
 
 	s := &Shard{
-		shardFSM:      shardFSM,
-		connSemaphore: connSemaphore,
+		shardFSM:        shardFSM,
+		requestQueue:    requestQueue,
+		config:          cfg,
+		shardID:         shardID,
+		replicaManager:  replica.NewPushBasedReplicaManager(cfg),
+		connectionPools: make(map[int]*connectionPool),
 	}
 
 	// Setup Raft configuration
@@ -470,6 +652,9 @@ func NewShard(cfg *config.Config, shardID int, replicaID int) (*Shard, error) {
 
 	s.raft = raftNode
 
+	// Start the replica manager
+	s.replicaManager.Start()
+
 	// Bootstrap the cluster if this is the bootstrap replica
 	if replicaConfig.Bootstrap {
 		// Build configuration with all replicas in the shard
@@ -503,6 +688,10 @@ func (s *Shard) Start(rpcAddress string) error {
 	if err != nil {
 		return err
 	}
+	err = serv.Register(s.replicaManager)
+	if err != nil {
+		return fmt.Errorf("failed to register replica manager RPC service: %w", err)
+	}
 
 	var listener net.Listener
 	listener, err = net.Listen("tcp", rpcAddress)
@@ -512,6 +701,18 @@ func (s *Shard) Start(rpcAddress string) error {
 
 	log.Printf("Shard %d listening for RPC connections on %s", s.shardFSM.Id, rpcAddress)
 
+	// Start worker pool (50 workers)
+	numWorkers := 50
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			for conn := range s.requestQueue {
+				serv.ServeConn(conn)
+				conn.Close()
+			}
+		}()
+	}
+
+	// Accept connections and enqueue them
 	for {
 		var conn net.Conn
 		conn, err = listener.Accept()
@@ -520,15 +721,7 @@ func (s *Shard) Start(rpcAddress string) error {
 			continue
 		}
 
-		// Acquire semaphore before spawning goroutine
-		s.connSemaphore <- struct{}{}
-
-		go func(c net.Conn) {
-			defer func() {
-				// Release semaphore when done
-				<-s.connSemaphore
-			}()
-			serv.ServeConn(c)
-		}(conn)
+		// Enqueue connection for worker to process
+		s.requestQueue <- conn
 	}
 }

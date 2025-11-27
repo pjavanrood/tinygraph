@@ -12,7 +12,7 @@ import (
 
 // LocalGraphBenchmark handles local graph benchmarking
 type LocalGraphBenchmark struct {
-	localGraph       graph.Graph[string, string]
+	localGraph       map[string][]string // Simple adjacency list
 	measurements     []Measurement
 	measurementsLock sync.Mutex
 	bfsVertices      []string
@@ -21,7 +21,7 @@ type LocalGraphBenchmark struct {
 
 func NewLocalGraphBenchmark(bfsVertices []string, bfsRadius int) *LocalGraphBenchmark {
 	return &LocalGraphBenchmark{
-		localGraph:   graph.New(graph.StringHash, graph.Directed()),
+		localGraph:   make(map[string][]string),
 		measurements: make([]Measurement, 0),
 		bfsVertices:  bfsVertices,
 		bfsRadius:    bfsRadius,
@@ -58,17 +58,12 @@ func (lgb *LocalGraphBenchmark) performLocalBFS(startVertexID string, radius int
 			continue
 		}
 
-		adjacencyMap, err := lgb.localGraph.AdjacencyMap()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get adjacency map: %v", err)
-		}
-
-		neighbors, ok := adjacencyMap[current.vertex]
+		neighbors, ok := lgb.localGraph[current.vertex]
 		if !ok {
 			continue
 		}
 
-		for neighbor := range neighbors {
+		for _, neighbor := range neighbors {
 			if !visited[neighbor] {
 				visited[neighbor] = true
 				result = append(result, neighbor)
@@ -91,10 +86,16 @@ func (lgb *LocalGraphBenchmark) Run(workload []string, checkpointPositions []int
 
 	// Ingest graph and run BFS at checkpoints
 	for _, op := range operations {
-		// Add vertices and edge to local graph
-		_ = lgb.localGraph.AddVertex(op.From)
-		_ = lgb.localGraph.AddVertex(op.To)
-		_ = lgb.localGraph.AddEdge(op.From, op.To)
+		// Add edge to adjacency list
+		// Ensure both vertices exist in the map
+		if _, exists := lgb.localGraph[op.From]; !exists {
+			lgb.localGraph[op.From] = []string{}
+		}
+		if _, exists := lgb.localGraph[op.To]; !exists {
+			lgb.localGraph[op.To] = []string{}
+		}
+		// Add edge: from -> to
+		lgb.localGraph[op.From] = append(lgb.localGraph[op.From], op.To)
 
 		currentOp++
 
@@ -103,13 +104,13 @@ func (lgb *LocalGraphBenchmark) Run(workload []string, checkpointPositions []int
 			// Run BFS queries
 			for _, vertexID := range lgb.bfsVertices {
 				// Check if vertex exists in graph
-				_, err := lgb.localGraph.Vertex(vertexID)
-				if err != nil {
+				_, exists := lgb.localGraph[vertexID]
+				if !exists {
 					continue // Vertex doesn't exist yet
 				}
 
 				start := time.Now()
-				_, err = lgb.performLocalBFS(vertexID, lgb.bfsRadius)
+				bfsResult, err := lgb.performLocalBFS(vertexID, lgb.bfsRadius)
 				rtt := time.Since(start)
 
 				if err != nil {
@@ -121,13 +122,15 @@ func (lgb *LocalGraphBenchmark) Run(workload []string, checkpointPositions []int
 				lgb.recordMeasurement(Measurement{
 					Operation:  "bfs",
 					RTT:        rtt,
-					RTTMs:      float64(rtt) / float64(time.Millisecond),
+					RTTMs:      float64(rtt.Milliseconds()),
 					Checkpoint: checkpointIdx + 1,
 					BFSStart:   vertexID,
 					BFSRadius:  lgb.bfsRadius,
+					BFSResult:  bfsResult,
 					Timestamp:  time.Now(),
 				})
 			}
+			log.Printf("Checkpoint %d completed. Resuming operations...", checkpointIdx+1)
 			checkpointIdx++
 		}
 	}

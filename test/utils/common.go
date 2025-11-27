@@ -2,12 +2,10 @@ package utils
 
 import (
 	"fmt"
-	"log"
 	"net/rpc"
 	"os"
 	"os/exec"
 	"sort"
-	"syscall"
 	"testing"
 	"time"
 
@@ -211,7 +209,7 @@ func (c *TestClient) DeleteEdge(fromVertexID, toVertexID types.VertexId) types.T
 // BFS performs a BFS query at a given timestamp
 func (c *TestClient) BFS(startVertexID types.VertexId, radius int, timestamp types.Timestamp) []types.VertexId {
 	var resp rpcTypes.BFSResponse
-	err := c.conn.Call("QueryManager.ShardedBFS", &rpcTypes.BFSRequest{
+	err := c.conn.Call("QueryManager.BFS", &rpcTypes.BFSRequest{
 		StartVertexID: startVertexID,
 		Radius:        radius,
 		Timestamp:     timestamp,
@@ -232,83 +230,4 @@ func StartProcess(t *testing.T, name string, args ...string) *exec.Cmd {
 		t.Fatalf("Failed to start %s: %v", name, err)
 	}
 	return cmd
-}
-
-// TestMain sets up and tears down the test environment
-func TestMain(m *testing.M) {
-	log.Println("Setting up end-to-end test environment...")
-
-	// Load config
-	cfg, err := config.LoadConfig("../config.yaml")
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
-	}
-
-	// Start shard replica processes
-	var shardCmds []*exec.Cmd
-	for _, shard := range cfg.Shards {
-		for _, replica := range shard.Replicas {
-			log.Printf("Starting shard %d replica %d...", shard.ID, replica.ID)
-			cmd := exec.Command("go", "run", "../cmd/shard/main.go",
-				"-config", "../config.yaml",
-				"-shard-id", fmt.Sprintf("%d", shard.ID),
-				"-replica-id", fmt.Sprintf("%d", replica.ID))
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			// Set process group so we can kill the entire group including child processes
-			cmd.SysProcAttr = &syscall.SysProcAttr{
-				Setpgid: true,
-			}
-			err := cmd.Start()
-			if err != nil {
-				log.Fatalf("Failed to start shard %d replica %d: %v", shard.ID, replica.ID, err)
-			}
-			shardCmds = append(shardCmds, cmd)
-		}
-	}
-
-	// Start query manager
-	log.Println("Starting query manager...")
-	qmCmd := exec.Command("go", "run", "../cmd/qm/main.go", "-config", "../config.yaml")
-	qmCmd.Stdout = os.Stdout
-	qmCmd.Stderr = os.Stderr
-	// Set process group so we can kill the entire group including child processes
-	qmCmd.SysProcAttr = &syscall.SysProcAttr{
-		Setpgid: true,
-	}
-	err = qmCmd.Start()
-	if err != nil {
-		log.Fatalf("Failed to start query manager: %v", err)
-	}
-
-	// Wait for services to be ready
-	log.Println("Waiting for services to start...")
-	time.Sleep(5 * time.Second)
-
-	// Run tests
-	exitCode := m.Run()
-
-	// Cleanup
-	log.Println("Cleaning up test environment...")
-	// Kill the entire process group (negative PID) to ensure child processes are terminated
-	if qmCmd.Process != nil {
-		pgid, err := syscall.Getpgid(qmCmd.Process.Pid)
-		if err == nil {
-			// Kill entire process group
-			syscall.Kill(-pgid, syscall.SIGINT)
-		}
-		qmCmd.Wait()
-	}
-	for _, cmd := range shardCmds {
-		if cmd.Process != nil {
-			pgid, err := syscall.Getpgid(cmd.Process.Pid)
-			if err == nil {
-				// Kill entire process group
-				syscall.Kill(-pgid, syscall.SIGINT)
-			}
-			cmd.Wait()
-		}
-	}
-
-	os.Exit(exitCode)
 }
