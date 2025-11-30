@@ -51,7 +51,7 @@ func (s *ShardFSM) Call(hostname string, callLambda func(*rpc.Client) error) {
 			for err != nil {
 				log.Printf("Retrying dial to shard leader")
 				s.connectionsMu.Unlock()
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(50 * time.Millisecond)
 				s.connectionsMu.Lock()
 				client, err = rpc.Dial("tcp", hostname)
 			}
@@ -219,9 +219,6 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 	instance.Mx.Lock()
 	defer instance.Mx.Unlock()
 
-	var wg sync.WaitGroup
-	var wgmx sync.Mutex
-
 	type BFSEntry struct {
 		Id VertexId
 		N  int
@@ -254,7 +251,7 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 				}
 				for _, edge := range vert.GetAllEdges(req.Timestamp) {
 					// early out if already visited
-					if _, exists := instance.Visited[internalTypes.VertexId(curr.Id)]; exists {
+					if _, exists := instance.Visited[internalTypes.VertexId(edge.ToID)]; exists {
 						continue
 					}
 
@@ -279,11 +276,10 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 						}
 
 						// dispatch the request to the other shard
-						wg.Add(1)
+						dispatchedRequests[shardConfig.ID]++
+						instance.Visited[internalTypes.VertexId(edge.ToID)] = true
 						go func() {
-							defer wg.Done()
-							wgmx.Lock()
-							defer wgmx.Unlock()
+							log.Printf("Dispatching for vertex %s", edge.ToID)
 
 							// connect to the shard
 							replicas := shardConfig.Replicas
@@ -311,20 +307,12 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 								log.Println("Success is false")
 								return
 							}
-							dispatchedRequests[shardConfig.ID]++
-							instance.Mx.Lock()
-							s.bfsInstances[req.Id].Visited[edge.ToID] = true
-							instance.Mx.Unlock()
 						}()
 					}
 				}
 			}
 		}
 	}
-
-	instance.Mx.Unlock()
-	wg.Wait()
-	instance.Mx.Lock()
 
 	// send the results to the callback addr
 
