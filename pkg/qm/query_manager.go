@@ -555,8 +555,8 @@ func (qm *QueryManager) BFSResponse(req *rpcTypes.BFSFromShardRequest, resp *rpc
 	}
 
 	qm.managers[req.Id].DispatchedRequests[int(req.Shard)]--
-	for shard, reqs := range req.DispatchedRequests {
-		qm.managers[req.Id].DispatchedRequests[shard] += reqs
+	for _, shard := range req.DispatchedRequests {
+		qm.managers[req.Id].DispatchedRequests[int(shard)]++
 	}
 	//for _, vertexId := range req.Vertices {
 	for _, vertexId := range req.Vertices {
@@ -612,7 +612,6 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 		client, err = rpc.Dial("tcp", addr)
 		if err != nil {
 			continue
-			return fmt.Errorf("failed to connect to shard %d at %s: %w", shardConfig.ID, addr, err)
 		}
 	}
 	defer client.Close()
@@ -634,9 +633,10 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 	qm.managers[newId].DispatchedRequests[shardID] = 1
 	qm.bfsMx.Unlock()
 
+	tempList := make([]rpcTypes.BFSVertexLevelPair, 1)
+	tempList[0] = rpcTypes.BFSVertexLevelPair{V: req.StartVertexID, N: req.Radius}
 	bfsReq := &rpcTypes.BFSToShardRequest{
-		Root:         req.StartVertexID,
-		N:            req.Radius,
+		Vertices:     tempList,
 		Timestamp:    req.Timestamp,
 		Id:           newId,
 		CallbackAddr: net.JoinHostPort(qm.config.QueryManager.Host, strconv.Itoa(qm.config.QueryManager.Port)),

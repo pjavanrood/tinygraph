@@ -216,43 +216,33 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 	s.bfsMu.RLock()
 	instance := s.bfsInstances[req.Id]
 	s.bfsMu.RUnlock()
-	/*
-		instance.Mx.Lock()
-		defer instance.Mx.Unlock()
-	*/
-
-	type BFSEntry struct {
-		Id VertexId
-		N  int
-	}
 
 	q := list.New()
-	q.PushBack(&BFSEntry{
-		Id: VertexId(req.Root),
-		N:  req.N,
-	})
+	for _, vertexLevelPair := range req.Vertices {
+		q.PushBack(&vertexLevelPair)
+	}
 
 	localVisited := make([]internalTypes.VertexId, 0)
-	dispatchedRequests := make(map[int]int)
+	frontierVertices := make(map[internalTypes.ShardId]([]rpcTypes.BFSVertexLevelPair))
 
 	for q.Len() > 0 {
-		curr := q.Front().Value.(*BFSEntry)
+		curr := q.Front().Value.(*rpcTypes.BFSVertexLevelPair)
 		q.Remove(q.Front())
 
 		instance.Mx.RLock()
-		if _, exists := instance.Visited[internalTypes.VertexId(curr.Id)]; exists {
+		if _, exists := instance.Visited[curr.V]; exists {
 			instance.Mx.RUnlock()
 			continue
 		}
 		instance.Mx.RUnlock()
 
-		if vert, exists := s.vertices[curr.Id]; exists {
+		if vert, exists := s.vertices[VertexId(curr.V)]; exists {
 			stamped := vert.GetAt(req.Timestamp)
 			if stamped != nil {
 				instance.Mx.Lock()
-				instance.Visited[internalTypes.VertexId(curr.Id)] = true
+				instance.Visited[curr.V] = true
 				instance.Mx.Unlock()
-				localVisited = append(localVisited, internalTypes.VertexId(curr.Id))
+				localVisited = append(localVisited, curr.V)
 				if curr.N == 0 {
 					continue
 				}
@@ -267,16 +257,15 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 
 					if _, has := s.vertices[VertexId(edge.ToID)]; has {
 						// edge to local vertex
-						q.PushBack(&BFSEntry{
-							Id: VertexId(edge.ToID),
-							N:  curr.N - 1,
+						q.PushBack(&rpcTypes.BFSVertexLevelPair{
+							V: edge.ToID,
+							N: curr.N - 1,
 						})
 					} else {
 						// edge to remote vertex
 
 						// figure out WHERE the vertex is
 						// copied from pkg/qm/query_manager.go
-						// TODO: make this shared maybe? If it's static in this way
 						parts := strings.Split(string(edge.ToID), "-")
 						shardId, _ := strconv.Atoi(parts[0])
 						shardConfig, err := s.config.GetShardByID(shardId)
@@ -285,45 +274,105 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 							continue
 						}
 
-						// dispatch the request to the other shard
-						dispatchedRequests[shardConfig.ID]++
+						// add the vertex and level to the list
+						if _, has := frontierVertices[internalTypes.ShardId(shardConfig.ID)]; !has {
+							frontierVertices[internalTypes.ShardId(shardConfig.ID)] = make([]rpcTypes.BFSVertexLevelPair, 0)
+						}
+
+						frontierVertices[internalTypes.ShardId(shardConfig.ID)] = append(frontierVertices[internalTypes.ShardId(shardConfig.ID)], rpcTypes.BFSVertexLevelPair{V: edge.ToID, N: curr.N - 1})
 						instance.Mx.Lock()
 						instance.Visited[internalTypes.VertexId(edge.ToID)] = true
 						instance.Mx.Unlock()
-						go func() {
-							log.Printf("Dispatching for vertex %s", edge.ToID)
 
-							// connect to the shard
-							replicas := shardConfig.Replicas
-							leaderHostname := replicas[rand.IntN(len(shardConfig.Replicas))].GetRPCAddress()
-
-							if leaderHostname == "" {
-								log.Printf("Failed getting leader hostname")
-								return
+						// TODO: make this shared maybe? If it's static in this way
+						/*
+							parts := strings.Split(string(edge.ToID), "-")
+							shardId, _ := strconv.Atoi(parts[0])
+							shardConfig, err := s.config.GetShardByID(shardId)
+							if err != nil {
+								log.Printf("Failed to get shard by ID: %v", err)
+								continue
 							}
 
-							bfsReq := &rpcTypes.BFSToShardRequest{
-								Root:         edge.ToID,
-								N:            curr.N - 1,
-								Timestamp:    req.Timestamp,
-								Id:           req.Id,
-								CallbackAddr: req.CallbackAddr,
-								FirstReq:     false,
-							}
-							var bfsResp rpcTypes.BFSToShardResponse
-							bfsLambda := func(client *rpc.Client) error {
-								return client.Call("Shard.BFS", bfsReq, &bfsResp)
-							}
-							s.Call(leaderHostname, bfsLambda)
-							if !bfsResp.Success {
-								log.Println("Success is false")
-								return
-							}
-						}()
+							// dispatch the request to the other shard
+							dispatchedRequests[shardConfig.ID]++
+							instance.Mx.Lock()
+							instance.Visited[internalTypes.VertexId(edge.ToID)] = true
+							instance.Mx.Unlock()
+							go func() {
+								log.Printf("Dispatching for vertex %s", edge.ToID)
+
+								// connect to the shard
+								replicas := shardConfig.Replicas
+								leaderHostname := replicas[rand.IntN(len(shardConfig.Replicas))].GetRPCAddress()
+
+								if leaderHostname == "" {
+									log.Printf("Failed getting leader hostname")
+									return
+								}
+
+								bfsReq := &rpcTypes.BFSToShardRequest{
+									Root:         edge.ToID,
+									N:            curr.N - 1,
+									Timestamp:    req.Timestamp,
+									Id:           req.Id,
+									CallbackAddr: req.CallbackAddr,
+									FirstReq:     false,
+								}
+								var bfsResp rpcTypes.BFSToShardResponse
+								bfsLambda := func(client *rpc.Client) error {
+									return client.Call("Shard.BFS", bfsReq, &bfsResp)
+								}
+								s.Call(leaderHostname, bfsLambda)
+								if !bfsResp.Success {
+									log.Println("Success is false")
+									return
+								}
+							}()
+						*/
 					}
 				}
 			}
 		}
+	}
+
+	// dispatch shard requests
+	for shardId, frontierVerts := range frontierVertices {
+		go func() {
+			log.Printf("Dispatching for shard %d", shardId)
+
+			shardConfig, err := s.config.GetShardByID(int(shardId))
+			if err != nil {
+				log.Printf("Failed to get shard by ID: %v", err)
+				return
+			}
+
+			// connect to the shard
+			replicas := shardConfig.Replicas
+			leaderHostname := replicas[rand.IntN(len(shardConfig.Replicas))].GetRPCAddress()
+
+			if leaderHostname == "" {
+				log.Printf("Failed getting leader hostname")
+				return
+			}
+
+			bfsReq := &rpcTypes.BFSToShardRequest{
+				Vertices:     frontierVerts,
+				Timestamp:    req.Timestamp,
+				Id:           req.Id,
+				CallbackAddr: req.CallbackAddr,
+				FirstReq:     false,
+			}
+			var bfsResp rpcTypes.BFSToShardResponse
+			bfsLambda := func(client *rpc.Client) error {
+				return client.Call("Shard.BFS", bfsReq, &bfsResp)
+			}
+			s.Call(leaderHostname, bfsLambda)
+			if !bfsResp.Success {
+				log.Println("Success is false")
+				return
+			}
+		}()
 	}
 
 	// send the results to the callback addr
@@ -332,7 +381,7 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 		Id:                 req.Id,
 		Shard:              types.ShardId(s.Id),
 		Vertices:           localVisited,
-		DispatchedRequests: dispatchedRequests,
+		DispatchedRequests: slices.Collect(maps.Keys(frontierVertices)),
 		FirstResp:          req.FirstReq,
 	}
 	var toClientResp rpcTypes.BFSFromShardResponse
@@ -347,16 +396,18 @@ func (s *ShardFSM) BFS(req rpcTypes.BFSToShardRequest, resp *rpcTypes.BFSToShard
 	defer func() {
 		resp.Success = success
 	}()
-	// search for the vertex at the timestamp first
-	vertex, ok := s.vertices[VertexId(req.Root)]
-	if !ok {
-		success = false
-		return fmt.Errorf("Vertex with ID \"%s\" has never existed", req.Root)
-	}
+	// search for the vertices at the timestamp first
+	for _, vertexLevelPair := range req.Vertices {
+		vertex, ok := s.vertices[VertexId(vertexLevelPair.V)]
+		if !ok {
+			success = false
+			return fmt.Errorf("Vertex with ID \"%s\" has never existed", vertex)
+		}
 
-	if vertex.GetAt(req.Timestamp) == nil {
-		success = false
-		return fmt.Errorf("Vertex with ID \"%s\" does not exist at timestamp %f", req.Root, req.Timestamp)
+		if vertex.GetAt(req.Timestamp) == nil {
+			success = false
+			return fmt.Errorf("Vertex with ID \"%s\" does not exist at timestamp %f", vertex, req.Timestamp)
+		}
 	}
 
 	s.bfsMu.Lock()
