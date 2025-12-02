@@ -9,7 +9,7 @@ import (
 // Placeholder for BFS implementation
 
 type BFSInstance struct {
-	Mx              sync.Mutex
+	Mx              sync.RWMutex
 	Id              types.BFSId
 	Visited         map[types.VertexId]bool
 	CallbackAddress string

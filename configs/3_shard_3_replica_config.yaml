@@ -103,5 +103,5 @@ replication:
   replication_factor: 3  # Number of replicas per shard
 
 logging:
-  level: "INFO"  # Options: "OFF", "FATAL", "ERROR", "WARN", "INFO", "DEBUG"
+  level: "OFF"  # Options: "OFF", "FATAL", "ERROR", "WARN", "INFO", "DEBUG"
 

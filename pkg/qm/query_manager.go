@@ -3,7 +3,7 @@ package qm
 import (
 	"fmt"
 	"maps"
-	"math/rand"
+	"math/rand/v2"
 	"net"
 	"net/rpc"
 	"slices"
@@ -38,7 +38,7 @@ type QueryManager struct {
 	requestQueue   chan net.Conn               // Queue of incoming connection requests
 	managers       map[types.BFSId]*BfsManager // maps BFSIds to a manager
 	idGenerator    uint
-	bfsMx          sync.Mutex
+	bfsMx          sync.RWMutex
 }
 
 // NewQueryManager creates a new query manager instance
@@ -67,7 +67,7 @@ func (qm *QueryManager) generateTimestamp() types.Timestamp {
 func (qm *QueryManager) generateVertexID(shardConfig *config.ShardConfig) types.VertexId {
 	// Compact encoding: shardID-randomHex
 	// Example: "0-a3f2b8c1d4e5f6a7" or "42-1234567890abcdef"
-	randomPart := fmt.Sprintf("%016x", rand.Int63())
+	randomPart := fmt.Sprintf("%016x", rand.Int64())
 	return types.VertexId(fmt.Sprintf("%d-%s", shardConfig.ID, randomPart))
 }
 
@@ -541,14 +541,14 @@ func (qm *QueryManager) BFSResponse(req *rpcTypes.BFSFromShardRequest, resp *rpc
 	log.Printf("Received response for request %d from shard %d", req.Id, req.Shard)
 
 	// lookup the manager (if it doesn't exist, ignore it)
-	qm.bfsMx.Lock()
+	qm.bfsMx.RLock()
 	if _, exists := qm.managers[req.Id]; !exists {
-		qm.bfsMx.Unlock()
+		qm.bfsMx.RUnlock()
 		return nil
 	}
 	qm.managers[req.Id].Mx.Lock()
 	defer qm.managers[req.Id].Mx.Unlock()
-	qm.bfsMx.Unlock()
+	qm.bfsMx.RUnlock()
 
 	if req.FirstResp {
 		qm.managers[req.Id].FirstRecvd = true
@@ -573,7 +573,7 @@ func (qm *QueryManager) BFSResponse(req *rpcTypes.BFSFromShardRequest, resp *rpc
 	}
 
 	if allZero && qm.managers[req.Id].FirstRecvd {
-		qm.managers[req.Id].Done <- nil
+		go func() { qm.managers[req.Id].Done <- nil }()
 	}
 
 	return nil
@@ -595,16 +595,20 @@ func (qm *QueryManager) ShardedBFS(req *rpcTypes.BFSRequest, resp *rpcTypes.BFSR
 	}
 	for client == nil {
 		// Connect to the shard
-		leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
-		if err != nil {
-			continue
-			return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
-		}
-		addr, err := shardConfig.GetReplicaAddress(leaderID)
-		if err != nil {
-			continue
-			return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
-		}
+		/*
+			leaderID, err := qm.replicaManager.GetLeaderID(shardConfig.ID)
+			if err != nil {
+				continue
+				return fmt.Errorf("failed to get leader ID for shard %d: %w", shardConfig.ID, err)
+			}
+			addr, err := shardConfig.GetReplicaAddress(leaderID)
+			if err != nil {
+				continue
+				return fmt.Errorf("failed to get replica address for shard %d: %w", shardConfig.ID, err)
+			}
+		*/
+		replicas := shardConfig.Replicas
+		addr := replicas[rand.IntN(len(shardConfig.Replicas))].GetRPCAddress()
 		client, err = rpc.Dial("tcp", addr)
 		if err != nil {
 			continue

@@ -37,7 +37,7 @@ type ShardFSM struct {
 	Id           ShardId
 	config       *config.Config
 	bfsInstances map[types.BFSId]*bfs.BFSInstance
-	bfsMu        sync.Mutex
+	bfsMu        sync.RWMutex
 	// Connection pools per shard (keyed by ShardID)
 	connections   map[string]*rpc.Client
 	connectionsMu sync.Mutex
@@ -213,11 +213,13 @@ func (s *ShardFSM) getNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *r
 
 // actual background BFS call
 func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
-	s.bfsMu.Lock()
+	s.bfsMu.RLock()
 	instance := s.bfsInstances[req.Id]
-	s.bfsMu.Unlock()
-	instance.Mx.Lock()
-	defer instance.Mx.Unlock()
+	s.bfsMu.RUnlock()
+	/*
+		instance.Mx.Lock()
+		defer instance.Mx.Unlock()
+	*/
 
 	type BFSEntry struct {
 		Id VertexId
@@ -237,23 +239,31 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 		curr := q.Front().Value.(*BFSEntry)
 		q.Remove(q.Front())
 
+		instance.Mx.RLock()
 		if _, exists := instance.Visited[internalTypes.VertexId(curr.Id)]; exists {
+			instance.Mx.RUnlock()
 			continue
 		}
+		instance.Mx.RUnlock()
 
 		if vert, exists := s.vertices[curr.Id]; exists {
 			stamped := vert.GetAt(req.Timestamp)
 			if stamped != nil {
+				instance.Mx.Lock()
 				instance.Visited[internalTypes.VertexId(curr.Id)] = true
+				instance.Mx.Unlock()
 				localVisited = append(localVisited, internalTypes.VertexId(curr.Id))
 				if curr.N == 0 {
 					continue
 				}
 				for _, edge := range vert.GetAllEdges(req.Timestamp) {
 					// early out if already visited
+					instance.Mx.RLock()
 					if _, exists := instance.Visited[internalTypes.VertexId(edge.ToID)]; exists {
+						instance.Mx.RUnlock()
 						continue
 					}
+					instance.Mx.RUnlock()
 
 					if _, has := s.vertices[VertexId(edge.ToID)]; has {
 						// edge to local vertex
@@ -277,7 +287,9 @@ func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
 
 						// dispatch the request to the other shard
 						dispatchedRequests[shardConfig.ID]++
+						instance.Mx.Lock()
 						instance.Visited[internalTypes.VertexId(edge.ToID)] = true
+						instance.Mx.Unlock()
 						go func() {
 							log.Printf("Dispatching for vertex %s", edge.ToID)
 
