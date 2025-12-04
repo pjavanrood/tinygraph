@@ -1,12 +1,21 @@
 package shard
 
 import (
+	"container/list"
 	"fmt"
 	"maps"
+	"math/rand/v2"
+	"net/rpc"
 	"slices"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
+	"github.com/pjavanrood/tinygraph/internal/types"
 	internalTypes "github.com/pjavanrood/tinygraph/internal/types"
+	"github.com/pjavanrood/tinygraph/pkg/bfs"
 	mvccTypes "github.com/pjavanrood/tinygraph/pkg/mvcc"
 	rpcTypes "github.com/pjavanrood/tinygraph/pkg/rpc"
 )
@@ -24,9 +33,38 @@ const TIMEOUT_SECONDS = 5
 // It stores a subset of vertices and their edges using MVCC
 // This is the internal state that gets replicated through Raft
 type ShardFSM struct {
-	vertices map[VertexId]*mvccTypes.Vertex
-	Id       ShardId
-	config   *config.Config
+	vertices     map[VertexId]*mvccTypes.Vertex
+	Id           ShardId
+	config       *config.Config
+	bfsInstances map[types.BFSId]*bfs.BFSInstance
+	bfsMu        sync.RWMutex
+	// Connection pools per shard (keyed by ShardID)
+	connections   map[string]*rpc.Client
+	connectionsMu sync.Mutex
+}
+
+func (s *ShardFSM) Call(hostname string, callLambda func(*rpc.Client) error) {
+	for {
+		s.connectionsMu.Lock()
+		if s.connections[hostname] == nil {
+			client, err := rpc.Dial("tcp", hostname)
+			for err != nil {
+				log.Printf("Retrying dial to shard leader")
+				s.connectionsMu.Unlock()
+				time.Sleep(50 * time.Millisecond)
+				s.connectionsMu.Lock()
+				client, err = rpc.Dial("tcp", hostname)
+			}
+			s.connections[hostname] = client
+		}
+		s.connectionsMu.Unlock()
+
+		//err := s.connections[hostname].Call(rpcCall, req, resp)
+		err := callLambda(s.connections[hostname])
+		if err == nil {
+			return
+		}
+	}
 }
 
 // addVertex adds a new vertex to the shard
@@ -173,43 +211,217 @@ func (s *ShardFSM) getNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *r
 	return nil
 }
 
-// getNeighborsForBFS retrieves all neighbors of a vertex at a given timestamp for BFS
-// Returns empty slice if vertex doesn't exist (doesn't error)
-func (s *ShardFSM) getNeighborsForBFS(vertexID internalTypes.VertexId, timestamp internalTypes.Timestamp) ([]internalTypes.VertexId, error) {
-	vertex, ok := s.vertices[VertexId(vertexID)]
-	if !ok {
-		return []internalTypes.VertexId{}, nil // Return empty, don't error
+// actual background BFS call
+func (s *ShardFSM) bfs(req rpcTypes.BFSToShardRequest) {
+	s.bfsMu.RLock()
+	instance := s.bfsInstances[req.Id]
+	s.bfsMu.RUnlock()
+
+	q := list.New()
+	for _, vertexLevelPair := range req.Vertices {
+		q.PushBack(&vertexLevelPair)
 	}
 
-	neighbors := vertex.GetAllEdges(timestamp)
-	result := make([]internalTypes.VertexId, len(neighbors))
-	for i, edge := range neighbors {
-		result[i] = edge.ToID
-	}
+	localVisited := make([]internalTypes.VertexId, 0)
+	frontierVertices := make(map[internalTypes.ShardId]([]rpcTypes.BFSVertexLevelPair))
 
-	return result, nil
-}
+	for q.Len() > 0 {
+		curr := q.Front().Value.(*rpcTypes.BFSVertexLevelPair)
+		q.Remove(q.Front())
 
-// batchGetNeighbors retrieves neighbors for multiple vertices at a given timestamp
-// This is an internal method called by Shard
-func (s *ShardFSM) batchGetNeighbors(req rpcTypes.BatchGetNeighborsToShardRequest, resp *rpcTypes.BatchGetNeighborsToShardResponse) error {
-	resp.Results = make(map[internalTypes.VertexId][]internalTypes.VertexId)
-
-	for _, vertexID := range req.VertexIDs {
-		vertex, ok := s.vertices[VertexId(vertexID)]
-		if !ok {
-			// Skip missing vertices, return empty neighbors
-			resp.Results[vertexID] = []internalTypes.VertexId{}
+		instance.Mx.RLock()
+		if _, exists := instance.Visited[curr.V]; exists {
+			instance.Mx.RUnlock()
 			continue
 		}
+		instance.Mx.RUnlock()
 
-		neighbors := vertex.GetAllEdges(req.Timestamp)
-		neighborIDs := make([]internalTypes.VertexId, len(neighbors))
-		for i, edge := range neighbors {
-			neighborIDs[i] = edge.ToID
+		if vert, exists := s.vertices[VertexId(curr.V)]; exists {
+			stamped := vert.GetAt(req.Timestamp)
+			if stamped != nil {
+				instance.Mx.Lock()
+				instance.Visited[curr.V] = true
+				instance.Mx.Unlock()
+				localVisited = append(localVisited, curr.V)
+				if curr.N == 0 {
+					continue
+				}
+				for _, edge := range vert.GetAllEdges(req.Timestamp) {
+					// early out if already visited
+					instance.Mx.RLock()
+					if _, exists := instance.Visited[internalTypes.VertexId(edge.ToID)]; exists {
+						instance.Mx.RUnlock()
+						continue
+					}
+					instance.Mx.RUnlock()
+
+					if _, has := s.vertices[VertexId(edge.ToID)]; has {
+						// edge to local vertex
+						q.PushBack(&rpcTypes.BFSVertexLevelPair{
+							V: edge.ToID,
+							N: curr.N - 1,
+						})
+					} else {
+						// edge to remote vertex
+
+						// figure out WHERE the vertex is
+						// copied from pkg/qm/query_manager.go
+						parts := strings.Split(string(edge.ToID), "-")
+						shardId, _ := strconv.Atoi(parts[0])
+						shardConfig, err := s.config.GetShardByID(shardId)
+						if err != nil {
+							log.Printf("Failed to get shard by ID: %v", err)
+							continue
+						}
+
+						// add the vertex and level to the list
+						if _, has := frontierVertices[internalTypes.ShardId(shardConfig.ID)]; !has {
+							frontierVertices[internalTypes.ShardId(shardConfig.ID)] = make([]rpcTypes.BFSVertexLevelPair, 0)
+						}
+
+						frontierVertices[internalTypes.ShardId(shardConfig.ID)] = append(frontierVertices[internalTypes.ShardId(shardConfig.ID)], rpcTypes.BFSVertexLevelPair{V: edge.ToID, N: curr.N - 1})
+						instance.Mx.Lock()
+						instance.Visited[internalTypes.VertexId(edge.ToID)] = true
+						instance.Mx.Unlock()
+
+						// TODO: make this shared maybe? If it's static in this way
+						/*
+							parts := strings.Split(string(edge.ToID), "-")
+							shardId, _ := strconv.Atoi(parts[0])
+							shardConfig, err := s.config.GetShardByID(shardId)
+							if err != nil {
+								log.Printf("Failed to get shard by ID: %v", err)
+								continue
+							}
+
+							// dispatch the request to the other shard
+							dispatchedRequests[shardConfig.ID]++
+							instance.Mx.Lock()
+							instance.Visited[internalTypes.VertexId(edge.ToID)] = true
+							instance.Mx.Unlock()
+							go func() {
+								log.Printf("Dispatching for vertex %s", edge.ToID)
+
+								// connect to the shard
+								replicas := shardConfig.Replicas
+								leaderHostname := replicas[rand.IntN(len(shardConfig.Replicas))].GetRPCAddress()
+
+								if leaderHostname == "" {
+									log.Printf("Failed getting leader hostname")
+									return
+								}
+
+								bfsReq := &rpcTypes.BFSToShardRequest{
+									Root:         edge.ToID,
+									N:            curr.N - 1,
+									Timestamp:    req.Timestamp,
+									Id:           req.Id,
+									CallbackAddr: req.CallbackAddr,
+									FirstReq:     false,
+								}
+								var bfsResp rpcTypes.BFSToShardResponse
+								bfsLambda := func(client *rpc.Client) error {
+									return client.Call("Shard.BFS", bfsReq, &bfsResp)
+								}
+								s.Call(leaderHostname, bfsLambda)
+								if !bfsResp.Success {
+									log.Println("Success is false")
+									return
+								}
+							}()
+						*/
+					}
+				}
+			}
 		}
-		resp.Results[vertexID] = neighborIDs
 	}
+
+	// dispatch shard requests
+	for shardId, frontierVerts := range frontierVertices {
+		go func() {
+			log.Printf("Dispatching for shard %d", shardId)
+
+			shardConfig, err := s.config.GetShardByID(int(shardId))
+			if err != nil {
+				log.Printf("Failed to get shard by ID: %v", err)
+				return
+			}
+
+			// connect to the shard
+			replicas := shardConfig.Replicas
+			leaderHostname := replicas[rand.IntN(len(shardConfig.Replicas))].GetRPCAddress()
+
+			if leaderHostname == "" {
+				log.Printf("Failed getting leader hostname")
+				return
+			}
+
+			bfsReq := &rpcTypes.BFSToShardRequest{
+				Vertices:     frontierVerts,
+				Timestamp:    req.Timestamp,
+				Id:           req.Id,
+				CallbackAddr: req.CallbackAddr,
+				FirstReq:     false,
+			}
+			var bfsResp rpcTypes.BFSToShardResponse
+			bfsLambda := func(client *rpc.Client) error {
+				return client.Call("Shard.BFS", bfsReq, &bfsResp)
+			}
+			s.Call(leaderHostname, bfsLambda)
+			if !bfsResp.Success {
+				log.Println("Success is false")
+				return
+			}
+		}()
+	}
+
+	// send the results to the callback addr
+
+	toClientReq := &rpcTypes.BFSFromShardRequest{
+		Id:                 req.Id,
+		Shard:              types.ShardId(s.Id),
+		Vertices:           localVisited,
+		DispatchedRequests: slices.Collect(maps.Keys(frontierVertices)),
+		FirstResp:          req.FirstReq,
+	}
+	var toClientResp rpcTypes.BFSFromShardResponse
+	responseLambda := func(client *rpc.Client) error {
+		return client.Call("QueryManager.BFSResponse", toClientReq, &toClientResp)
+	}
+	s.Call(req.CallbackAddr, responseLambda)
+}
+
+func (s *ShardFSM) BFS(req rpcTypes.BFSToShardRequest, resp *rpcTypes.BFSToShardResponse) error {
+	success := true
+	defer func() {
+		resp.Success = success
+	}()
+	// search for the vertices at the timestamp first
+	for _, vertexLevelPair := range req.Vertices {
+		vertex, ok := s.vertices[VertexId(vertexLevelPair.V)]
+		if !ok {
+			success = false
+			return fmt.Errorf("Vertex with ID \"%s\" has never existed", vertex)
+		}
+
+		if vertex.GetAt(req.Timestamp) == nil {
+			success = false
+			return fmt.Errorf("Vertex with ID \"%s\" does not exist at timestamp %f", vertex, req.Timestamp)
+		}
+	}
+
+	s.bfsMu.Lock()
+	// find or create bfsInstances entry
+	if _, exists := s.bfsInstances[req.Id]; !exists {
+		s.bfsInstances[req.Id] = &bfs.BFSInstance{
+			Id:              req.Id,
+			Visited:         make(map[internalTypes.VertexId]bool),
+			CallbackAddress: req.CallbackAddr,
+		}
+	}
+	s.bfsMu.Unlock()
+
+	go s.bfs(req)
 
 	return nil
 }
@@ -245,8 +457,10 @@ func (s *ShardFSM) deleteAll(req rpcTypes.DeleteAllToShardRequest, resp *rpcType
 // newShardFSM creates a new ShardFSM instance
 func newShardFSM(cfg *config.Config, id int) *ShardFSM {
 	return &ShardFSM{
-		vertices: make(map[VertexId]*mvccTypes.Vertex, 0),
-		Id:       ShardId(id),
-		config:   cfg,
+		vertices:     make(map[VertexId]*mvccTypes.Vertex, 0),
+		Id:           ShardId(id),
+		config:       cfg,
+		bfsInstances: make(map[types.BFSId]*bfs.BFSInstance),
+		connections:  make(map[string]*rpc.Client),
 	}
 }

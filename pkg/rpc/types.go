@@ -178,51 +178,6 @@ type BFSResponse struct {
 	Vertices []types.VertexId // The IDs of the vertices in the BFS
 }
 
-// Distributed BFS types
-// StartVertex represents a vertex with its BFS level from the original root
-type StartVertex struct {
-	VertexID types.VertexId // The vertex ID
-	Level    int            // The BFS level of the vertex from the original root
-}
-
-// VertexLevel represents a vertex with its BFS level
-type VertexLevel struct {
-	VertexID types.VertexId // The vertex ID
-	Level    int            // The BFS level of the vertex
-}
-
-// QMToShardBFSRequest - QM sends to shard to initiate BFS
-type QMToShardBFSRequest struct {
-	StartVertices []StartVertex   // The start vertices with their levels (can be multiple for batching)
-	Radius        int             // The radius of the BFS
-	Timestamp     types.Timestamp // The timestamp of the BFS
-	RequestID     string          // Unique request ID for coordination
-	RequesterAddr string          // QM address to send results to
-}
-
-// ShardToQMBFSResponse - Shard sends to QM with results and expected responses from other shards
-type ShardToQMBFSResponse struct {
-	RequestID         string             // The request ID
-	ShardID           int                // The shard ID that processed this
-	Vertices          []VertexLevel      // Slice of vertex ID to level pairs
-	ExpectedResponses []ExpectedResponse // For each shard, how many responses QM should expect
-}
-
-// ExpectedResponse tells QM how many responses to expect from a shard
-type ExpectedResponse struct {
-	ShardID int // The shard ID
-	Count   int // The number of responses to expect from this shard
-}
-
-// ShardToShardBFSRequest - Shard sends to another shard (async, no response needed)
-type ShardToShardBFSRequest struct {
-	StartVertices []StartVertex   // The start vertices with their levels
-	Radius        int             // The radius of the BFS
-	Timestamp     types.Timestamp // The timestamp of the BFS
-	RequestID     string          // Unique request ID for coordination
-	RequesterAddr string          // QM address to send results to
-}
-
 // ------------------------------------------------------------
 
 // FetchAll request and response
@@ -277,4 +232,45 @@ type DeleteAllToShardRequest struct {
 
 type DeleteAllToShardResponse struct {
 	Success bool // Whether the operation succeeded
+}
+
+// ------------------------------------------------------------
+
+type BFSVertexLevelPair struct {
+	V types.VertexId
+	N int
+}
+
+type BFSToShardRequest struct {
+	Vertices     []BFSVertexLevelPair
+	Timestamp    types.Timestamp // The timestamp of the operation
+	Id           types.BFSId
+	CallbackAddr string
+	FirstReq     bool
+}
+
+type BFSToShardResponse struct {
+	Success bool // Whether the operation has been dispatched
+}
+
+// sends the BFS visited information to the QM
+type BFSFromShardRequest struct {
+	Id                 types.BFSId      // the request ID
+	Shard              types.ShardId    // the shard id
+	Vertices           []types.VertexId // can be empty
+	DispatchedRequests []types.ShardId  // this is the additional requests dispatched by this shard
+	FirstResp          bool             // whether this is the response for the initial RPC call for the BFS
+}
+
+type BFSFromShardResponse struct {
+}
+
+// ------------------------------------------------------------
+
+type GetLeaderIdRequest struct {
+	ShardId int
+}
+
+type GetLeaderIdResponse struct {
+	LeaderId int
 }

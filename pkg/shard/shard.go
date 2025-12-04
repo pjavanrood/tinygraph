@@ -15,7 +15,6 @@ import (
 
 	"github.com/hashicorp/raft"
 	"github.com/pjavanrood/tinygraph/internal/config"
-	"github.com/pjavanrood/tinygraph/internal/types"
 	"github.com/pjavanrood/tinygraph/internal/util"
 	mvccTypes "github.com/pjavanrood/tinygraph/pkg/mvcc"
 	"github.com/pjavanrood/tinygraph/pkg/replica"
@@ -34,110 +33,6 @@ const (
 	DeleteAll
 )
 
-// BFSRequestState tracks active BFS requests for deduplication
-type BFSRequestState struct {
-	visited       map[string]int // vertexID -> level
-	pendingShards map[int]int    // shardID -> number of pending responses
-	mu            sync.Mutex
-}
-
-// connectionPool manages a pool of RPC connections for a specific shard
-type connectionPool struct {
-	connections chan *rpc.Client
-	address     string
-	mu          sync.Mutex
-	maxSize     int
-	closed      bool
-}
-
-// newConnectionPool creates a new connection pool for a shard
-func newConnectionPool(address string, maxSize int) *connectionPool {
-	return &connectionPool{
-		connections: make(chan *rpc.Client, maxSize),
-		address:     address,
-		maxSize:     maxSize,
-	}
-}
-
-// getConnection gets a connection from the pool or creates a new one
-func (cp *connectionPool) getConnection() (*rpc.Client, error) {
-	cp.mu.Lock()
-	closed := cp.closed
-	cp.mu.Unlock()
-
-	if closed {
-		// Pool is closed, create new connection directly
-		return rpc.Dial("tcp", cp.address)
-	}
-
-	select {
-	case client := <-cp.connections:
-		// Check if connection is still valid
-		if client != nil {
-			return client, nil
-		}
-	default:
-		// No connection available, create new one
-	}
-
-	// Create new connection
-	client, err := rpc.Dial("tcp", cp.address)
-	if err != nil {
-		return nil, err
-	}
-	return client, nil
-}
-
-// returnConnection returns a connection to the pool or closes it if pool is full
-func (cp *connectionPool) returnConnection(client *rpc.Client) {
-	if client == nil {
-		return
-	}
-
-	cp.mu.Lock()
-	closed := cp.closed
-	cp.mu.Unlock()
-
-	if closed {
-		// Pool is closed, close the connection
-		client.Close()
-		return
-	}
-
-	select {
-	case cp.connections <- client:
-		// Successfully returned to pool
-	default:
-		// Pool is full, close the connection
-		client.Close()
-	}
-}
-
-// closeAll closes all connections in the pool
-func (cp *connectionPool) closeAll() {
-	cp.mu.Lock()
-	defer cp.mu.Unlock()
-
-	if cp.closed {
-		return // Already closed
-	}
-
-	cp.closed = true
-
-	// Drain and close all connections
-	for {
-		select {
-		case client := <-cp.connections:
-			if client != nil {
-				client.Close()
-			}
-		default:
-			// No more connections in pool
-			return
-		}
-	}
-}
-
 // Shard wraps a ShardFSM with Raft consensus functionality
 // It implements the raft.FSM interface and handles all RPC calls
 type Shard struct {
@@ -148,12 +43,6 @@ type Shard struct {
 	config         *config.Config
 	shardID        int
 	replicaManager replica.ReplicaManager
-	// Track active BFS requests by requestID for deduplication
-	activeBFSRequests map[string]*BFSRequestState
-	bfsMu             sync.Mutex
-	// Connection pools per shard (keyed by shardID)
-	connectionPools map[int]*connectionPool
-	poolMu          sync.RWMutex
 }
 
 // ShardLogOp represents an operation to be logged and replicated via Raft
@@ -452,20 +341,6 @@ func (s *Shard) GetNeighbors(req rpcTypes.GetNeighborsToShardRequest, resp *rpcT
 	return s.shardFSM.getNeighbors(req, resp)
 }
 
-// BatchGetNeighbors is the RPC handler for getting neighbors of multiple vertices with linearizable read semantics
-func (s *Shard) BatchGetNeighbors(req rpcTypes.BatchGetNeighborsToShardRequest, resp *rpcTypes.BatchGetNeighborsToShardResponse) error {
-	// Use VerifyLeader to ensure we have up-to-date state and are still the leader
-	// This provides linearizable read semantics without going through the Raft log
-	if err := s.raft.VerifyLeader().Error(); err != nil {
-		return fmt.Errorf("not leader or unable to verify leadership: %w", err)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.shardFSM.batchGetNeighbors(req, resp)
-}
-
 // getShardIDFromVertexID extracts shard ID from vertex ID format: "shardID-randomHex"
 func (s *Shard) getShardIDFromVertexID(vertexID string) (int, error) {
 	parts := strings.Split(vertexID, "-")
@@ -479,391 +354,18 @@ func (s *Shard) getShardIDFromVertexID(vertexID string) (int, error) {
 	return shardID, nil
 }
 
-// getOrCreateConnectionPool gets or creates a connection pool for a shard
-// It checks the current leader and invalidates the pool if the leader has changed
-func (s *Shard) getOrCreateConnectionPool(targetShardID int) (*connectionPool, error) {
-	// Get target shard config
-	targetShardConfig, err := s.config.GetShardByID(targetShardID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get shard config for shard %d: %w", targetShardID, err)
-	}
-
-	// Use replica manager to get the current leader ID
-	currentLeaderID, err := s.replicaManager.GetLeaderID(targetShardID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get leader ID for shard %d: %w", targetShardID, err)
-	}
-
-	currentAddr, err := targetShardConfig.GetReplicaAddress(currentLeaderID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get replica address for shard %d: %w", targetShardID, err)
-	}
-
-	// Acquire write lock to check and create pool atomically
-	s.poolMu.Lock()
-	defer s.poolMu.Unlock()
-
-	// Check if we have an existing pool
-	if pool, exists := s.connectionPools[targetShardID]; exists {
-		// Check if the pool's address matches the current leader address
-		pool.mu.Lock()
-		poolAddr := pool.address
-		poolClosed := pool.closed
-		pool.mu.Unlock()
-
-		if !poolClosed && poolAddr == currentAddr {
-			// Pool is still valid, reuse it
-			return pool, nil
+func (s *Shard) BFS(req rpcTypes.BFSToShardRequest, resp *rpcTypes.BFSToShardResponse) error {
+	// read requests do not need to go through the leader
+	/*
+		if err := s.raft.VerifyLeader().Error; err != nil {
+			return fmt.Errorf("not leader or unable to verify leadership: %w", err)
 		}
-		// Leader has changed or pool is closed, invalidate it
-		pool.closeAll()
-		delete(s.connectionPools, targetShardID)
-	}
+	*/
 
-	// Create new connection pool (max 10 connections per shard)
-	pool := newConnectionPool(currentAddr, 10)
-	s.connectionPools[targetShardID] = pool
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	return pool, nil
-}
-
-// invalidateConnectionPool removes the connection pool for a shard (e.g., when leader changes)
-func (s *Shard) invalidateConnectionPool(targetShardID int) {
-	s.poolMu.Lock()
-	defer s.poolMu.Unlock()
-
-	if pool, exists := s.connectionPools[targetShardID]; exists {
-		pool.closeAll()
-		delete(s.connectionPools, targetShardID)
-	}
-}
-
-// callShardBFS calls the BFS handler on another shard using connection pooling (async, no response needed)
-func (s *Shard) callShardBFS(targetShardID int, req *rpcTypes.ShardToShardBFSRequest) error {
-	// Get or create connection pool for this shard (checks current leader)
-	pool, err := s.getOrCreateConnectionPool(targetShardID)
-	if err != nil {
-		return err
-	}
-
-	// Get connection from pool
-	client, err := pool.getConnection()
-	if err != nil {
-		return fmt.Errorf("failed to get connection to shard %d: %w", targetShardID, err)
-	}
-
-	// Make async call - return connection to pool after use (or close if error)
-	go func() {
-		var callErr error
-		defer func() {
-			if callErr != nil {
-				// On error, close the connection (it might be broken)
-				client.Close()
-				// Check if error indicates leader change
-				errStr := callErr.Error()
-				if strings.Contains(errStr, "not leader") || strings.Contains(errStr, "leader") {
-					// Leader has changed, invalidate the pool
-					s.invalidateConnectionPool(targetShardID)
-				}
-			} else {
-				// On success, return to pool
-				pool.returnConnection(client)
-			}
-		}()
-
-		// Make RPC call (async, we don't wait for response)
-		var dummyResp rpcTypes.ShardToQMBFSResponse
-		callErr = client.Call("Shard.DistributedBFSFromShard", req, &dummyResp)
-		if callErr != nil {
-			log.Printf("Failed to call shard %d for BFS: %v", targetShardID, callErr)
-		}
-	}()
-
-	return nil
-}
-
-// performBFS performs the actual BFS logic (shared between QM and shard requests)
-// Returns: vertices found, map of shardID -> list of vertices to send to that shard, map of shardID -> expected response count
-func (s *Shard) performBFS(reqStartVertices []rpcTypes.StartVertex, radius int, timestamp types.Timestamp, requestID string) ([]rpcTypes.VertexLevel, map[int][]rpcTypes.StartVertex, map[int]int) {
-	log.Printf("[Shard %d] performBFS: RequestID=%s, StartVertices=%d, Radius=%d", s.shardID, requestID, len(reqStartVertices), radius)
-
-	// Get or create request state for deduplication
-	s.bfsMu.Lock()
-	requestState, exists := s.activeBFSRequests[requestID]
-	if !exists {
-		requestState = &BFSRequestState{
-			visited:       make(map[string]int),
-			pendingShards: make(map[int]int),
-		}
-		s.activeBFSRequests[requestID] = requestState
-		log.Printf("[Shard %d] Created new BFS request state for RequestID=%s", s.shardID, requestID)
-	} else {
-		log.Printf("[Shard %d] Reusing existing BFS request state for RequestID=%s (visited: %d)", s.shardID, requestID, len(requestState.visited))
-	}
-	s.bfsMu.Unlock()
-
-	// Perform local BFS
-	requestState.mu.Lock()
-	defer requestState.mu.Unlock()
-
-	// Local BFS queue: (vertexID, level)
-	type bfsItem struct {
-		vertexID types.VertexId
-		level    int
-	}
-	localQueue := make([]bfsItem, 0, len(reqStartVertices))
-	// Process each start vertex with its level
-	for _, startVertex := range reqStartVertices {
-		// Check if already visited in this request
-		if _, visited := requestState.visited[string(startVertex.VertexID)]; visited {
-			// Already visited, skip
-			continue
-		}
-		// Use the level from the start vertex
-		absoluteLevel := startVertex.Level
-		if absoluteLevel <= radius {
-			localQueue = append(localQueue, bfsItem{vertexID: startVertex.VertexID, level: absoluteLevel})
-		}
-	}
-
-	// Group cross-shard requests by target shard only
-	// Map structure: shardID -> []struct{vertexID, level}
-	type vertexLevelPair struct {
-		vertexID types.VertexId
-		level    int
-	}
-	crossShardRequests := make(map[int][]vertexLevelPair)
-	vertices := make([]rpcTypes.VertexLevel, 0)
-
-	// Perform local BFS
-	for len(localQueue) > 0 {
-		current := localQueue[0]
-		localQueue = localQueue[1:]
-
-		// Skip if already visited
-		if existingLevel, visited := requestState.visited[string(current.vertexID)]; visited {
-			if existingLevel <= current.level {
-				continue // Already visited at same or lower level
-			}
-		}
-
-		// Mark as visited
-		requestState.visited[string(current.vertexID)] = current.level
-		vertices = append(vertices, rpcTypes.VertexLevel{
-			VertexID: current.vertexID,
-			Level:    current.level,
-		})
-
-		// Check if we've reached max radius
-		if current.level >= radius {
-			continue
-		}
-
-		// Get neighbors
-		s.mu.Lock()
-		neighbors, err := s.shardFSM.getNeighborsForBFS(current.vertexID, timestamp)
-		s.mu.Unlock()
-		if err != nil {
-			// Vertex might not exist, continue
-			continue
-		}
-
-		// Process neighbors
-		for _, neighbor := range neighbors {
-			// Check if already visited
-			if _, visited := requestState.visited[string(neighbor)]; visited {
-				continue
-			}
-
-			// Determine neighbor's shard
-			neighborShardID, err := s.getShardIDFromVertexID(string(neighbor))
-			if err != nil {
-				log.Printf("Failed to get shard ID for vertex %s: %v", neighbor, err)
-				continue
-			}
-
-			if neighborShardID == s.shardID {
-				// Local neighbor, continue BFS
-				nextLevel := current.level + 1
-				if nextLevel <= radius {
-					localQueue = append(localQueue, bfsItem{vertexID: neighbor, level: nextLevel})
-				}
-			} else {
-				// Cross-shard edge, add to cross-shard requests with correct level
-				nextLevel := current.level + 1
-				if nextLevel <= radius {
-					crossShardRequests[neighborShardID] = append(crossShardRequests[neighborShardID], vertexLevelPair{
-						vertexID: neighbor,
-						level:    nextLevel,
-					})
-				}
-			}
-		}
-	}
-
-	// Group vertices by target shard for cross-shard requests
-	shardVertices := make(map[int][]rpcTypes.StartVertex)
-	expectedResponses := make(map[int]int)
-	for targetShardID, vertexLevelPairs := range crossShardRequests {
-		// Convert to StartVertex format
-		startVertices := make([]rpcTypes.StartVertex, 0, len(vertexLevelPairs))
-		for _, pair := range vertexLevelPairs {
-			startVertices = append(startVertices, rpcTypes.StartVertex{
-				VertexID: pair.vertexID,
-				Level:    pair.level,
-			})
-		}
-		shardVertices[targetShardID] = startVertices
-		expectedResponses[targetShardID] = 1 // One request per shard
-		log.Printf("[Shard %d] Will send %d vertices to shard %d", s.shardID, len(startVertices), targetShardID)
-	}
-
-	log.Printf("[Shard %d] performBFS complete: Found %d local vertices, sending to %d shards", s.shardID, len(vertices), len(shardVertices))
-	return vertices, shardVertices, expectedResponses
-}
-
-// DistributedBFS is the RPC handler for distributed BFS traversal from QM
-func (s *Shard) DistributedBFS(req rpcTypes.QMToShardBFSRequest, resp *rpcTypes.ShardToQMBFSResponse) error {
-	log.Printf("[Shard %d] DistributedBFS called from QM: RequestID=%s, StartVertices=%d, Radius=%d", s.shardID, req.RequestID, len(req.StartVertices), req.Radius)
-
-	// Use VerifyLeader to ensure we have up-to-date state
-	if err := s.raft.VerifyLeader().Error(); err != nil {
-		return fmt.Errorf("not leader or unable to verify leadership: %w", err)
-	}
-
-	// Initialize response
-	resp.RequestID = req.RequestID
-	resp.ShardID = s.shardID
-	resp.Vertices = make([]rpcTypes.VertexLevel, 0)
-	resp.ExpectedResponses = make([]rpcTypes.ExpectedResponse, 0)
-
-	// Perform BFS
-	vertices, shardVertices, expectedResponses := s.performBFS(req.StartVertices, req.Radius, req.Timestamp, req.RequestID)
-
-	log.Printf("[Shard %d] BFS complete: Found %d vertices, sending to %d shards", s.shardID, len(vertices), len(shardVertices))
-
-	// Set vertices in response
-	resp.Vertices = vertices
-
-	// Convert expected responses to response format
-	for shardID, count := range expectedResponses {
-		resp.ExpectedResponses = append(resp.ExpectedResponses, rpcTypes.ExpectedResponse{
-			ShardID: shardID,
-			Count:   count,
-		})
-		log.Printf("[Shard %d] Expecting %d response(s) from shard %d", s.shardID, count, shardID)
-	}
-
-	// Send cross-shard requests asynchronously
-	for targetShardID, startVertices := range shardVertices {
-		if len(startVertices) > 0 {
-			go func(shardID int, vertices []rpcTypes.StartVertex) {
-				log.Printf("[Shard %d] Sending BFS request to shard %d with %d vertices", s.shardID, shardID, len(vertices))
-				// Create request for target shard
-				targetReq := rpcTypes.ShardToShardBFSRequest{
-					StartVertices: vertices,
-					Radius:        req.Radius,
-					Timestamp:     req.Timestamp,
-					RequestID:     req.RequestID,
-					RequesterAddr: req.RequesterAddr,
-				}
-
-				// Call target shard (async, no response needed)
-				err := s.callShardBFS(shardID, &targetReq)
-				if err != nil {
-					log.Printf("[Shard %d] Failed to call shard %d for BFS: %v", s.shardID, shardID, err)
-				}
-			}(targetShardID, startVertices)
-		}
-	}
-
-	// NOTE: We return the response synchronously to QM, so we don't send async response here
-	// The synchronous response is sufficient for QM-initiated requests
-	log.Printf("[Shard %d] Returning synchronous response to QM: %d vertices, %d expected responses", s.shardID, len(resp.Vertices), len(resp.ExpectedResponses))
-
-	return nil
-}
-
-// DistributedBFSFromShard is the RPC handler for distributed BFS traversal from another shard
-func (s *Shard) DistributedBFSFromShard(req rpcTypes.ShardToShardBFSRequest, resp *rpcTypes.ShardToQMBFSResponse) error {
-	log.Printf("[Shard %d] DistributedBFSFromShard called: RequestID=%s, StartVertices=%d, Radius=%d", s.shardID, req.RequestID, len(req.StartVertices), req.Radius)
-
-	// Use VerifyLeader to ensure we have up-to-date state
-	if err := s.raft.VerifyLeader().Error(); err != nil {
-		return fmt.Errorf("not leader or unable to verify leadership: %w", err)
-	}
-
-	// Perform BFS
-	vertices, shardVertices, expectedResponses := s.performBFS(req.StartVertices, req.Radius, req.Timestamp, req.RequestID)
-
-	log.Printf("[Shard %d] BFS complete: Found %d vertices, sending to %d shards", s.shardID, len(vertices), len(shardVertices))
-
-	// Initialize response
-	resp.RequestID = req.RequestID
-	resp.ShardID = s.shardID
-	resp.Vertices = vertices
-	resp.ExpectedResponses = make([]rpcTypes.ExpectedResponse, 0)
-
-	// Convert expected responses to response format
-	for shardID, count := range expectedResponses {
-		resp.ExpectedResponses = append(resp.ExpectedResponses, rpcTypes.ExpectedResponse{
-			ShardID: shardID,
-			Count:   count,
-		})
-		log.Printf("[Shard %d] Expecting %d response(s) from shard %d", s.shardID, count, shardID)
-	}
-
-	// Send cross-shard requests asynchronously
-	for targetShardID, startVertices := range shardVertices {
-		if len(startVertices) > 0 {
-			go func(shardID int, vertices []rpcTypes.StartVertex) {
-				log.Printf("[Shard %d] Sending BFS request to shard %d with %d vertices", s.shardID, shardID, len(vertices))
-				// Create request for target shard
-				targetReq := rpcTypes.ShardToShardBFSRequest{
-					StartVertices: vertices,
-					Radius:        req.Radius,
-					Timestamp:     req.Timestamp,
-					RequestID:     req.RequestID,
-					RequesterAddr: req.RequesterAddr,
-				}
-
-				// Call target shard (async, no response needed)
-				err := s.callShardBFS(shardID, &targetReq)
-				if err != nil {
-					log.Printf("[Shard %d] Failed to call shard %d for BFS: %v", s.shardID, shardID, err)
-				}
-			}(targetShardID, startVertices)
-		}
-	}
-
-	// Send results back to QM asynchronously (this is called from another shard, so we must send async)
-	go func() {
-		qmResp := rpcTypes.ShardToQMBFSResponse{
-			RequestID:         req.RequestID,
-			ShardID:           s.shardID,
-			Vertices:          resp.Vertices,
-			ExpectedResponses: resp.ExpectedResponses,
-		}
-
-		log.Printf("[Shard %d] Sending async response to QM at %s: %d vertices, %d expected responses", s.shardID, req.RequesterAddr, len(qmResp.Vertices), len(qmResp.ExpectedResponses))
-
-		client, err := rpc.Dial("tcp", req.RequesterAddr)
-		if err != nil {
-			log.Printf("[Shard %d] Failed to connect to QM at %s: %v", s.shardID, req.RequesterAddr, err)
-			return
-		}
-		defer client.Close()
-
-		var dummyResp rpcTypes.ShardToQMBFSResponse
-		err = client.Call("QueryManager.ReceiveBFSResult", &qmResp, &dummyResp)
-		if err != nil {
-			log.Printf("[Shard %d] Failed to send BFS results to QM: %v", s.shardID, err)
-		} else {
-			log.Printf("[Shard %d] Successfully sent BFS results to QM", s.shardID)
-		}
-	}()
-
-	return nil
+	return s.shardFSM.BFS(req, resp)
 }
 
 // FetchAll is the RPC handler for fetching all vertex IDs in the shard with linearizable read semantics
@@ -944,16 +446,14 @@ func NewShard(cfg *config.Config, shardID int, replicaID int) (*Shard, error) {
 
 	// Create a request queue for incoming connections
 	// Buffer size allows some queuing before blocking
-	requestQueue := make(chan net.Conn, 100)
+	requestQueue := make(chan net.Conn, 50)
 
 	s := &Shard{
-		shardFSM:          shardFSM,
-		requestQueue:      requestQueue,
-		config:            cfg,
-		shardID:           shardID,
-		replicaManager:    replica.NewPushBasedReplicaManager(cfg),
-		activeBFSRequests: make(map[string]*BFSRequestState),
-		connectionPools:   make(map[int]*connectionPool),
+		shardFSM:       shardFSM,
+		requestQueue:   requestQueue,
+		config:         cfg,
+		shardID:        shardID,
+		replicaManager: replica.NewPushBasedReplicaManager(cfg),
 	}
 
 	// Setup Raft configuration

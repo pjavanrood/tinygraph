@@ -37,8 +37,8 @@ func NewEdge(from, to types.VertexId, ts types.Timestamp) *Edge {
 
 // UpdateEdge creates a new (updated) version of the same edge.
 func (e *Edge) UpdateEdge(ts types.Timestamp, prop *EdgeProp) *Edge {
-	e.mu.Lock()                 // ADD: Acquire write lock
-    defer e.mu.Unlock()         // ADD: Release write lock
+	e.mu.Lock()         // ADD: Acquire write lock
+	defer e.mu.Unlock() // ADD: Release write lock
 
 	temp := e.Prev
 	e.Prev = nil

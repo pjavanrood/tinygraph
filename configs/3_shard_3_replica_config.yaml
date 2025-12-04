@@ -4,7 +4,7 @@
 query_manager:
   host: "localhost"
   port: 9090
-  bfs_type: "naive"  # Options: "naive", "optimized"
+  bfs_type: "optimized"  # Options: "naive", "optimized"
 
 # Shard configuration - each shard stores a partition of the graph
 # Each shard has multiple replicas that use Raft for consensus

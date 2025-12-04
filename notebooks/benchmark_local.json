@@ -14,7 +14,7 @@
   "measurements": [
     {
       "operation": "bfs",
-      "rtt_ns": 241319,
+      "rtt_ns": 86417,
       "rtt_ms": 0,
       "checkpoint": 1,
       "bfs_start": "0",
@@ -762,11 +762,11 @@
         "882",
         "334"
       ],
-      "timestamp": "2025-11-27T01:23:51.932006906Z"
+      "timestamp": "2025-11-27T04:02:17.593457-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 212189,
+      "rtt_ns": 83542,
       "rtt_ms": 0,
       "checkpoint": 1,
       "bfs_start": "1",
@@ -1416,11 +1416,11 @@
         "810",
         "684"
       ],
-      "timestamp": "2025-11-27T01:23:51.932220885Z"
+      "timestamp": "2025-11-27T04:02:17.593541-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 187050,
+      "rtt_ns": 82292,
       "rtt_ms": 0,
       "checkpoint": 1,
       "bfs_start": "2",
@@ -2029,11 +2029,11 @@
         "882",
         "334"
       ],
-      "timestamp": "2025-11-27T01:23:51.932409225Z"
+      "timestamp": "2025-11-27T04:02:17.593623-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 158939,
+      "rtt_ns": 55417,
       "rtt_ms": 0,
       "checkpoint": 1,
       "bfs_start": "4",
@@ -2582,11 +2582,11 @@
         "334",
         "227"
       ],
-      "timestamp": "2025-11-27T01:23:51.932569514Z"
+      "timestamp": "2025-11-27T04:02:17.593679-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 194790,
+      "rtt_ns": 62083,
       "rtt_ms": 0,
       "checkpoint": 1,
       "bfs_start": "3",
@@ -3152,11 +3152,11 @@
         "334",
         "227"
       ],
-      "timestamp": "2025-11-27T01:23:51.932764754Z"
+      "timestamp": "2025-11-27T04:02:17.593741-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 330449,
+      "rtt_ns": 120125,
       "rtt_ms": 0,
       "checkpoint": 2,
       "bfs_start": "0",
@@ -3965,11 +3965,11 @@
         "468",
         "231"
       ],
-      "timestamp": "2025-11-27T01:23:51.933439442Z"
+      "timestamp": "2025-11-27T04:02:17.59397-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 314229,
+      "rtt_ns": 111875,
       "rtt_ms": 0,
       "checkpoint": 2,
       "bfs_start": "1",
@@ -4735,11 +4735,11 @@
         "231",
         "118"
       ],
-      "timestamp": "2025-11-27T01:23:51.933754301Z"
+      "timestamp": "2025-11-27T04:02:17.594082-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 297909,
+      "rtt_ns": 103209,
       "rtt_ms": 0,
       "checkpoint": 2,
       "bfs_start": "2",
@@ -5489,11 +5489,11 @@
         "743",
         "231"
       ],
-      "timestamp": "2025-11-27T01:23:51.9340527Z"
+      "timestamp": "2025-11-27T04:02:17.594185-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 289009,
+      "rtt_ns": 157208,
       "rtt_ms": 0,
       "checkpoint": 2,
       "bfs_start": "4",
@@ -6219,11 +6219,11 @@
         "231",
         "398"
       ],
-      "timestamp": "2025-11-27T01:23:51.934342229Z"
+      "timestamp": "2025-11-27T04:02:17.594343-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 293700,
+      "rtt_ns": 165417,
       "rtt_ms": 0,
       "checkpoint": 2,
       "bfs_start": "3",
@@ -6955,11 +6955,11 @@
         "743",
         "222"
       ],
-      "timestamp": "2025-11-27T01:23:51.934637999Z"
+      "timestamp": "2025-11-27T04:02:17.594509-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 468139,
+      "rtt_ns": 316834,
       "rtt_ms": 0,
       "checkpoint": 3,
       "bfs_start": "0",
@@ -7814,11 +7814,11 @@
         "745",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.935514026Z"
+      "timestamp": "2025-11-27T04:02:17.595048-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 502199,
+      "rtt_ns": 258958,
       "rtt_ms": 0,
       "checkpoint": 3,
       "bfs_start": "1",
@@ -8648,11 +8648,11 @@
         "118",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.936017005Z"
+      "timestamp": "2025-11-27T04:02:17.595307-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 445039,
+      "rtt_ns": 234250,
       "rtt_ms": 0,
       "checkpoint": 3,
       "bfs_start": "2",
@@ -9471,11 +9471,11 @@
         "993",
         "743"
       ],
-      "timestamp": "2025-11-27T01:23:51.936462544Z"
+      "timestamp": "2025-11-27T04:02:17.595541-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 310109,
+      "rtt_ns": 230125,
       "rtt_ms": 0,
       "checkpoint": 3,
       "bfs_start": "4",
@@ -10280,11 +10280,11 @@
         "755",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.936773003Z"
+      "timestamp": "2025-11-27T04:02:17.595771-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 197309,
+      "rtt_ns": 240541,
       "rtt_ms": 0,
       "checkpoint": 3,
       "bfs_start": "3",
@@ -11092,11 +11092,11 @@
         "857",
         "222"
       ],
-      "timestamp": "2025-11-27T01:23:51.936970452Z"
+      "timestamp": "2025-11-27T04:02:17.596012-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 840968,
+      "rtt_ns": 676666,
       "rtt_ms": 0,
       "checkpoint": 4,
       "bfs_start": "0",
@@ -11980,11 +11980,11 @@
         "637",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.938135239Z"
+      "timestamp": "2025-11-27T04:02:17.596826-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 616448,
+      "rtt_ns": 366792,
       "rtt_ms": 0,
       "checkpoint": 4,
       "bfs_start": "1",
@@ -12849,11 +12849,11 @@
         "884",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.938752677Z"
+      "timestamp": "2025-11-27T04:02:17.597193-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 614908,
+      "rtt_ns": 298667,
       "rtt_ms": 0,
       "checkpoint": 4,
       "bfs_start": "2",
@@ -13709,11 +13709,11 @@
         "683",
         "743"
       ],
-      "timestamp": "2025-11-27T01:23:51.939368075Z"
+      "timestamp": "2025-11-27T04:02:17.597492-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 605789,
+      "rtt_ns": 362417,
       "rtt_ms": 0,
       "checkpoint": 4,
       "bfs_start": "4",
@@ -14560,11 +14560,11 @@
         "755",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.939974344Z"
+      "timestamp": "2025-11-27T04:02:17.597854-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 591848,
+      "rtt_ns": 179625,
       "rtt_ms": 0,
       "checkpoint": 4,
       "bfs_start": "3",
@@ -15413,11 +15413,11 @@
         "743",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.940576382Z"
+      "timestamp": "2025-11-27T04:02:17.598035-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 821567,
+      "rtt_ns": 235667,
       "rtt_ms": 0,
       "checkpoint": 5,
       "bfs_start": "0",
@@ -16323,11 +16323,11 @@
         "883",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.942117467Z"
+      "timestamp": "2025-11-27T04:02:17.598426-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 719698,
+      "rtt_ns": 214750,
       "rtt_ms": 0,
       "checkpoint": 5,
       "bfs_start": "1",
@@ -17222,11 +17222,11 @@
         "857",
         "883"
       ],
-      "timestamp": "2025-11-27T01:23:51.942837665Z"
+      "timestamp": "2025-11-27T04:02:17.598641-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 688648,
+      "rtt_ns": 210542,
       "rtt_ms": 0,
       "checkpoint": 5,
       "bfs_start": "2",
@@ -18114,11 +18114,11 @@
         "743",
         "883"
       ],
-      "timestamp": "2025-11-27T01:23:51.943526783Z"
+      "timestamp": "2025-11-27T04:02:17.598851-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 686888,
+      "rtt_ns": 193541,
       "rtt_ms": 0,
       "checkpoint": 5,
       "bfs_start": "4",
@@ -18998,11 +18998,11 @@
         "857",
         "883"
       ],
-      "timestamp": "2025-11-27T01:23:51.944214241Z"
+      "timestamp": "2025-11-27T04:02:17.599045-08:00"
     },
     {
       "operation": "bfs",
-      "rtt_ns": 703058,
+      "rtt_ns": 202209,
       "rtt_ms": 0,
       "checkpoint": 5,
       "bfs_start": "3",
@@ -19884,7 +19884,7 @@
         "883",
         "857"
       ],
-      "timestamp": "2025-11-27T01:23:51.944917839Z"
+      "timestamp": "2025-11-27T04:02:17.599247-08:00"
     }
   ],
   "summary": {
@@ -19892,10 +19892,10 @@
     "total_add_vertices": 0,
     "total_add_edges": 16384,
     "total_bfs_queries": 25,
-    "avg_rtt_ms": 0.453287,
-    "min_rtt_ms": 0.158939,
-    "max_rtt_ms": 0.840968,
-    "total_duration_ns": 17489660,
-    "total_duration_ms": 17.48966
+    "avg_rtt_ms": 0.209966,
+    "min_rtt_ms": 0.055417,
+    "max_rtt_ms": 0.676666,
+    "total_duration_ns": 6852417,
+    "total_duration_ms": 6.852417
   }
 }

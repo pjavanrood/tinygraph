@@ -34,8 +34,8 @@ func NewVertex(id types.VertexId, prop *VertexProp, ts types.Timestamp) *Vertex 
 }
 
 func (v *Vertex) UpdateVertex(ts types.Timestamp, prop *VertexProp) *Vertex {
-	v.mu.Lock()                  // ADD: Acquire write lock
-    defer v.mu.Unlock()          // ADD: Release write lock
+	v.mu.Lock()         // ADD: Acquire write lock
+	defer v.mu.Unlock() // ADD: Release write lock
 
 	temp := v.Prev
 	v.Prev = nil
@@ -72,8 +72,8 @@ func (v *Vertex) AddEdge(to types.VertexId, ts types.Timestamp) error {
 
 // DeleteEdge logically deletes an outgoing edge by creating a deleted version.
 func (v *Vertex) DeleteEdge(to types.VertexId, ts types.Timestamp) {
-	v.mu.Lock()                  // ADD: Acquire write lock
-    defer v.mu.Unlock()          // ADD: Release write lock
+	v.mu.Lock()         // ADD: Acquire write lock
+	defer v.mu.Unlock() // ADD: Release write lock
 
 	if cur, ok := v.Edges[to]; ok && cur.AliveAt(ts) {
 		v.Edges[to] = cur.MarkDeleted(ts)

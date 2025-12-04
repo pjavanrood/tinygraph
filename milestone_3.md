@@ -55,17 +55,15 @@ The naive implementation serves as a baseline for comparison, demonstrating the 
 ### Query Manager (QM)
 - **Role**: Initiates BFS, tracks completion, aggregates results
 - **Key Functions**:
-  - `pkg/qm/query_manager.go:distributedBFS` - Orchestrates the BFS request
-  - `pkg/qm/query_manager.go:ReceiveBFSResult` - Collects results from shards
+  - `pkg/qm/query_manager.go:ShardedBFS` - Initiaties the BFS request
+  - `pkg/qm/query_manager.go:BFSResponse` - Updates the local BFS request state with information from shards
   - `pkg/qm/query_manager.go:BFS` - RPC entry point
 
 ### Shards
-- **Role**: Perform local BFS traversal, coordinate with other shards
+- **Role**: Perform local BFS traversal, dispatch BFS calls to other shards
 - **Key Functions**:
-  - `pkg/shard/shard.go:DistributedBFS` - Handles QM-initiated requests
-  - `pkg/shard/shard.go:DistributedBFSFromShard` - Handles shard-to-shard requests
-  - `pkg/shard/shard.go:performBFS` - Core BFS logic (shared)
-  - `pkg/shard/shard.go:callShardBFS` - Async cross-shard communication
+  - `pkg/shard/shard_fsm.go:BFS` - Manages BFS call state and dispatches internal BFS resolution
+  - `pkg/shard/shard.go:bfs` - Performs BFS on local nodes, and dispatches BFS to other shards when edges to other shards are found. Calls into the QueryManager to report with the results and which calls it made that the QM must await.
 
 ## BFS Request Flow
 
@@ -76,117 +74,91 @@ The naive implementation serves as a baseline for comparison, demonstrating the 
 - QM checks config: if `BFSType == "optimized"`, calls `distributedBFS`
 
 ### Step 2: QM Initializes BFS State
-**Function**: `pkg/qm/query_manager.go:distributedBFS`
+**Function**: `pkg/qm/query_manager.go:ShardedBFS`
 
 **QM Actions**:
-1. Generates unique `RequestID` (format: `bfs-{timestamp}-{random}`)
-2. Creates `BFSState` to track:
-   - `visited`: map of discovered vertices → levels
-   - `pendingShards`: map tracking expected vs received responses per shard
-   - `done`: channel to signal completion
+1. Generates unique `BFSId` (stored as a monotonically increasing number, but can be arbitrary as long as it is unique across the system)
+2. Creates `BFSManager` to track:
+   - `Vertices`: map of discovered vertices
+   - `DispatchedRequests`: map tracking the number of requests in flight for a given shard
+   - `FirstRecvd`: ensures that this value is set to true only when the initial request is returned (if we do not explicitly wait for the first request, there is a race condition where we early-out because we receive a response from the same shard, but not of the original request, ie qm->shard1->shard2->shard1, where the second request in the chain returns before the first does)
+   - `Done`: the channel on which we signal the end of the distributed BFS algorithm 
 3. Extracts shard ID from `StartVertexID` (format: `{shardID}-{randomHex}`)
-4. Registers state in `activeBFS` map
-5. Initializes pending state for starting shard: `Expected=1, Received=0`
+4. Registers state in `managers` map
+5. Initializes pending state for starting shard: `DispatchedRequests[shardId] = 1`
 
 ### Step 3: QM → Starting Shard (Synchronous)
-**Function**: `pkg/shard/shard.go:DistributedBFS`
+**Function**: `pkg/shard/shard_fsm.go:BFS`
 
 **QM sends**:
-- `QMToShardBFSRequest` with start vertex (level 0), radius, timestamp, requestID, QM address
+- `BFSToShardRequest` with start vertex, radius, timestamp, BFSId, QM address, and the `FirstReq` value to true.
 
 **Shard receives and**:
-1. Verifies leadership (`raft.VerifyLeader()`)
-2. Calls `performBFS` with start vertices
+1. Checks if the vertex exists in the graph on (a) this machine, and (b) at the given timestamp
+2. Finds or creates a new BFSInstance corresponding to the BFSId
+3. asynchronously calls `ShardFSM.bfs`, and returns from the RPC call
 
-### Step 4: Shard Performs Local BFS
-**Function**: `pkg/shard/shard.go:performBFS`
+### Step 4: Shard Performs Local BFS & Dispatches BFS Across Shards
+**Function**: `pkg/shard/shard_fsm.go:bfs`
 
 **Shard Actions**:
-1. **Deduplication**: Gets or creates `BFSRequestState` for this `RequestID` (prevents processing same request multiple times)
+1. **Deduplication and Race Conditions**: Fetches the corresponding BFSInstance and locks it so that it has exclusive RW access.
 2. **Local BFS Traversal**:
-   - Processes vertices in queue with their absolute levels (from original root)
+   - Processes vertices in queue using BFS
    - For each vertex:
-     - Skips if already visited at same or lower level
-     - Marks as visited, adds to results
-     - If level < radius, gets neighbors
-     - For each neighbor:
-       - If local (same shard): adds to local queue with `level+1`
-       - If cross-shard: groups by target shard with `level+1`
-3. **Returns**:
-   - `vertices`: local vertices found (with levels)
-   - `shardVertices`: map of `shardID → []StartVertex` (vertices to send to each shard)
-   - `expectedResponses`: map of `shardID → count` (how many responses to expect from each shard)
+     - Skips if already visited in the BFSInstance
+     - Checks if it exists at the given timestamp, and fetches it's data
+     - Marks as "locally visited", and adds to BFSInstance's Visited map
+     - If the "current level" is 0, continues.
+     - Otherwise, iterates over all it's neighbours
+     - If the neighbour is found locally, it is added to the queue with "level" N-1, s.t. N is the "level" of the current vertex
+     - If the neighbour is not found locally, an asynchronous function is called that will 
+       1. Find which shard it is located on
+       2. Send a BFS request with the radius being set to "level" N-1, and root being the remote vertex.
+       3. If the RPC call returns with no error, we add the vertex to the BFSInstance's Visited map (so we don't send out another RPC for this same vertex)
+     - Once the BFS has finished running, we wait for all the async functions to finish sending out their requests so we can tally up how many requests we sent to which shards (`dispatchedRequests`). This helps us inform the QM on what information it needs to wait for before it can proceed (it expects to receive all the messages this shard sent out). An RPC to the QM is made with `QueryManager.BFSResponse` to notify that it has completed it's BFS traversal.
 
-### Step 5: Shard → Other Shards (Asynchronous)
-**Function**: `pkg/shard/shard.go:DistributedBFS` (lines 757-778)
-
-**Shard Actions**:
-1. Returns synchronous response to QM with:
-   - Found vertices
-   - `ExpectedResponses` array (tells QM how many responses to expect from each target shard)
-2. **Asynchronously** sends `ShardToShardBFSRequest` to each target shard via `callShardBFS`
-   - Uses connection pooling for efficiency
-   - Fire-and-forget (no response expected from target shard)
-
-### Step 6: QM Processes Initial Response
-**Function**: `pkg/qm/query_manager.go:ReceiveBFSResult`
+### Step 5: QM Processes Responses & Collects Results
+**Function**: `pkg/qm/query_manager.go:BFSResponse`
 
 **QM Actions**:
-1. Looks up `BFSState` by `RequestID`
-2. **Merges vertices**: Adds discovered vertices to `visited` map (keeps minimum level if duplicate)
-3. **Updates pending counts**:
-   - Increments `Received` for responding shard
-   - For each `ExpectedResponse`, increments `Expected` for target shards
-4. **Checks completion**: If all shards have `Received == Expected`, closes `done` channel
-
-### Step 7: Target Shards Process Cross-Shard Requests
-**Function**: `pkg/shard/shard.go:DistributedBFSFromShard`
-
-**Shard receives** `ShardToShardBFSRequest` and:
-1. Verifies leadership
-2. Calls `performBFS` (same logic as Step 4, reusing deduplication state)
-3. **Asynchronously** sends results back to QM via `QueryManager.ReceiveBFSResult` RPC
-4. **Asynchronously** forwards requests to other shards if needed
-
-### Step 8: QM Collects All Results
-**Function**: `pkg/qm/query_manager.go:ReceiveBFSResult` (called repeatedly)
-
-**QM Actions** (for each async response):
-- Same as Step 6: merges vertices, updates pending counts, checks completion
+1. **Up-called**: Gets up-called into by a shard, specifying which BFSId it is providing information for.
+2. **Updates pending counts**: Decrements the calling shard's entry in the BFSManager's `DispatchedRequests` by 1 to symbolize acknowledging and expected BFS traversal by the calling shard. Then, Receives information about calls dispatched by the calling shard, and updates the BFSManager's `DispatchedRequests` to reflect any additional RPCs it must wait on based on the calling shard's BFS traversal.
+3. **Updates visited map**: Inserts every vertex reached by the calling shard's BFS to the BFSManager's `Vertices` field.
+4. **Checks for algorithm termination**: If every shard of the BFSManager's `DispatchedRequests` reaches 0, and the first request has been responded to, we send a message on the `Done` channel to signal termination.
 
 ### Step 9: QM Completes and Returns
-**Function**: `pkg/qm/query_manager.go:distributedBFS` (lines 701-728)
+**Function**: `pkg/qm/query_manager.go:ShardedBFS` (lines 701-728)
 
 **QM Actions**:
-1. Waits on `done` channel (or 30s timeout)
-2. When complete, copies `visited` map to result
-3. Cleans up `BFSState` from `activeBFS` map
+1. Waits on `Done` channel
+2. When complete, creates a slice of vertices from the `BFSManager.Vertex` map, and puts it in the response
+3. Cleans up the corresponding `BFSManager`
 4. Returns result to client via `BFS` handler
 
 ## Key Design Features
 
 ### Deduplication
-- Each shard maintains `BFSRequestState` per `RequestID` to avoid processing duplicate requests
+- Each shard maintains `BFSInstance` per `BFSId` to avoid running BFS on already-visited vertices
 - QM tracks visited vertices globally to prevent duplicates in final result
 
 ### Asynchronous Communication
 - Shard-to-shard requests are async (fire-and-forget)
-- Shard-to-QM responses are async (except initial synchronous response)
+- Shard-to-QM responses are async
 - Reduces latency by not blocking on network calls
+- QM awaits responses from all asynchronous Shard calls before retuning results
 
 ### Connection Pooling
-- Shards maintain connection pools per target shard (`connectionPool`)
-- Pools automatically invalidate when leader changes
+- Shards maintain connection pools per target shard
 - Reduces connection overhead
+- Automatically re-opens closed connections until a connection is established
 
 ### Completion Tracking
-- QM tracks `Expected` vs `Received` responses per shard
-- `Expected` counts are dynamically updated as shards report expected responses from other shards
-- BFS completes when all shards have `Received >= Expected`
+- QM tracks the total number of dispatched BFS calls based on responses from shards
+- BFS completes when all shards have 0 in-flight BFS calls, verified by explicitly awaiting the reception of the initial BFS call to ensure all calls are accounted for
 
 ### Level Tracking
-- Each vertex maintains its absolute level from the original root
-- Prevents incorrect level assignments in distributed traversal
+- Decrements the radius for BFS calls on each step (local or remote) ensuring we only visit the nodes within the radius of the original call
 - Ensures radius limits are correctly enforced
 
 ## Example Flow Diagram
@@ -194,30 +166,30 @@ The naive implementation serves as a baseline for comparison, demonstrating the 
 ```
 Client → QM.BFS
          ↓
-    QM.distributedBFS (creates RequestID, BFSState)
+    QM.ShardedBFS (creates BFSId, BFSManager)
          ↓
-    QM → Shard 0: DistributedBFS (sync)
+    QM → Shard 0: BFS(v, N, ts, BFSId) [async]
          ↓
-    Shard 0: performBFS
+    Shard 0: BFS
          ├─→ Finds local vertices
-         ├─→ Groups cross-shard neighbors
-         └─→ Returns: vertices + ExpectedResponses
+         ├─→ Dispatches BFS call on remote vertices
+         └─→ (asynchronously) Returns: vertices + DispatchedRequests
          ↓
-    Shard 0 → QM: ReceiveBFSResult (sync response)
+    Shard 0 → QM: BFSResponse (async response)
          ↓
-    QM: ReceiveBFSResult (updates state)
+    QM: BFSResponse (updates state)
          ↓
-    Shard 0 → Shard 1: DistributedBFSFromShard (async)
-    Shard 0 → Shard 2: DistributedBFSFromShard (async)
+    Shard 0 → Shard 1: BFS(v', N-1, ts, BFSId) [async]
+    Shard 0 → Shard 2: BFS(v'', N-1, ts, BFSId) [async]
          ↓
-    Shard 1: performBFS → QM: ReceiveBFSResult (async)
-    Shard 2: performBFS → QM: ReceiveBFSResult (async)
+    Shard 1: BFS → QM: BFSResponse (async)
+    Shard 2: BFS → QM: BFSResponse (async)
          ↓
-    QM: ReceiveBFSResult (multiple times, updates state)
+    QM: BFSResponse (multiple times, updates state)
          ↓
-    When all Received == Expected: close(done)
+    When first received and all Received == Expected: Done <- nil
          ↓
-    QM.distributedBFS returns result
+    QM.ShardedBFS returns result
          ↓
     QM.BFS returns to client
 ```

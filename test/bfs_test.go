@@ -2,11 +2,16 @@ package test
 
 import (
 	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/pjavanrood/tinygraph/internal/config"
 	"github.com/pjavanrood/tinygraph/internal/types"
+	"github.com/pjavanrood/tinygraph/test/utils"
 )
 
 // LocalGraph represents a simple adjacency list for local BFS computation
@@ -63,7 +68,7 @@ func (g *LocalGraph) ComputeBFS(start types.VertexId, radius int) []types.Vertex
 
 // Helper to compare BFS results
 func compareBFSResults(t *testing.T, testName string, expected, actual []types.VertexId) bool {
-	if !sameElements(expected, actual) {
+	if !utils.SameElements(expected, actual) {
 		t.Errorf("%s: Expected %v, got %v", testName, expected, actual)
 		return false
 	}
@@ -72,12 +77,12 @@ func compareBFSResults(t *testing.T, testName string, expected, actual []types.V
 
 // TestBFSLinearChain tests BFS on a linear chain graph
 func TestBFSLinearChain(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create linear chain: v1 -> v2 -> v3 -> v4 -> v5
@@ -137,12 +142,12 @@ func TestBFSLinearChain(t *testing.T) {
 
 // TestBFSStarTopology tests BFS on a star-shaped graph
 func TestBFSStarTopology(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create star topology: center -> leaf1, leaf2, leaf3, leaf4
@@ -198,12 +203,12 @@ func TestBFSStarTopology(t *testing.T) {
 
 // TestBFSCycle tests BFS on a cyclic graph
 func TestBFSCycle(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create cycle: v1 -> v2 -> v3 -> v4 -> v1
@@ -248,12 +253,12 @@ func TestBFSCycle(t *testing.T) {
 
 // TestBFSDisconnectedGraph tests BFS on disconnected components
 func TestBFSDisconnectedGraph(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create two disconnected components:
@@ -320,12 +325,12 @@ func TestBFSDisconnectedGraph(t *testing.T) {
 
 // TestBFSComplexGraph tests BFS on a more complex graph with multiple paths
 func TestBFSComplexGraph(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create a diamond-shaped graph with multiple paths:
@@ -388,12 +393,12 @@ func TestBFSComplexGraph(t *testing.T) {
 
 // TestBFSSingleVertex tests BFS on a graph with just one vertex
 func TestBFSSingleVertex(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create single vertex with no edges
@@ -420,12 +425,12 @@ func TestBFSSingleVertex(t *testing.T) {
 
 // TestBFSBinaryTree tests BFS on a binary tree structure
 func TestBFSBinaryTree(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create binary tree:
@@ -493,12 +498,12 @@ func TestBFSBinaryTree(t *testing.T) {
 
 // TestBFSMultipleStartingPoints tests BFS from different starting vertices in the same graph
 func TestBFSMultipleStartingPoints(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create graph: v1 -> v2 -> v3 -> v4
@@ -550,12 +555,12 @@ func TestBFSMultipleStartingPoints(t *testing.T) {
 
 // TestBFSLargeRadius tests BFS with radius larger than graph diameter
 func TestBFSLargeRadius(t *testing.T) {
-	cfg, err := config.LoadConfig("../3_shard_3_replica_config.yaml")
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
 	if err != nil {
 		t.Fatalf("Failed to load config: %v", err)
 	}
 
-	client := NewTestClient(t, cfg)
+	client := utils.NewTestClient(t, cfg)
 	defer client.Close()
 
 	// Create simple chain: v1 -> v2 -> v3
@@ -596,4 +601,83 @@ func TestBFSLargeRadius(t *testing.T) {
 	}
 
 	t.Log("Large radius BFS test passed")
+}
+
+// TestMain sets up and tears down the test environment
+func TestMain(m *testing.M) {
+	log.Println("Setting up end-to-end test environment...")
+
+	// Load config
+	cfg, err := config.LoadConfig("../configs/3_shard_3_replica_config.yaml")
+	if err != nil {
+		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Start shard replica processes
+	var shardCmds []*exec.Cmd
+	for _, shard := range cfg.Shards {
+		for _, replica := range shard.Replicas {
+			log.Printf("Starting shard %d replica %d...", shard.ID, replica.ID)
+			cmd := exec.Command("go", "run", "../cmd/shard/main.go",
+				"-config", "../configs/3_shard_3_replica_config.yaml",
+				"-shard-id", fmt.Sprintf("%d", shard.ID),
+				"-replica-id", fmt.Sprintf("%d", replica.ID))
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			// Set process group so we can kill the entire group including child processes
+			cmd.SysProcAttr = &syscall.SysProcAttr{
+				Setpgid: true,
+			}
+			err := cmd.Start()
+			if err != nil {
+				log.Fatalf("Failed to start shard %d replica %d: %v", shard.ID, replica.ID, err)
+			}
+			shardCmds = append(shardCmds, cmd)
+		}
+	}
+
+	// Start query manager
+	log.Println("Starting query manager...")
+	qmCmd := exec.Command("go", "run", "../cmd/qm/main.go", "-config", "../configs/3_shard_3_replica_config.yaml")
+	qmCmd.Stdout = os.Stdout
+	qmCmd.Stderr = os.Stderr
+	// Set process group so we can kill the entire group including child processes
+	qmCmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+	err = qmCmd.Start()
+	if err != nil {
+		log.Fatalf("Failed to start query manager: %v", err)
+	}
+
+	// Wait for services to be ready
+	log.Println("Waiting for services to start...")
+	time.Sleep(5 * time.Second)
+
+	// Run tests
+	exitCode := m.Run()
+
+	// Cleanup
+	log.Println("Cleaning up test environment...")
+	// Kill the entire process group (negative PID) to ensure child processes are terminated
+	if qmCmd.Process != nil {
+		pgid, err := syscall.Getpgid(qmCmd.Process.Pid)
+		if err == nil {
+			// Kill entire process group
+			syscall.Kill(-pgid, syscall.SIGINT)
+		}
+		qmCmd.Wait()
+	}
+	for _, cmd := range shardCmds {
+		if cmd.Process != nil {
+			pgid, err := syscall.Getpgid(cmd.Process.Pid)
+			if err == nil {
+				// Kill entire process group
+				syscall.Kill(-pgid, syscall.SIGINT)
+			}
+			cmd.Wait()
+		}
+	}
+
+	os.Exit(exitCode)
 }
